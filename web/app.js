@@ -9424,9 +9424,15 @@ function openTerminalModal(agentName) {
     }).catch(() => {})
   })
 
-  // Resize fit on modal resize
-  const ro = new ResizeObserver(() => { try { fitAddon.fit() } catch {} })
-  ro.observe(container)
+  // Resize fit on modal resize — observe the modal wrapper (not the xterm container
+  // itself) to avoid a ResizeObserver->fit->resize->ResizeObserver infinite loop
+  let fitTimer = null
+  const ro = new ResizeObserver(() => {
+    clearTimeout(fitTimer)
+    fitTimer = setTimeout(() => { try { fitAddon.fit() } catch {} }, 50)
+  })
+  const modalEl = container.closest('.terminal-modal') || container.parentElement
+  if (modalEl) ro.observe(modalEl)
 }
 
 document.getElementById('terminalClose')?.addEventListener('click', () => {
