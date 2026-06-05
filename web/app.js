@@ -989,6 +989,7 @@ const AVATARS = [
 ]
 
 let selectedAvatar = null
+let selectedAvatarFile = null // custom upload chosen in the create wizard (deferred until the agent exists)
 let agents = []
 let currentAgent = null
 // API-safe agent id for the currently open detail modal. Sub-agents key off
@@ -1055,6 +1056,9 @@ function populateAvatarGrid() {
       grid.querySelectorAll('.avatar-grid-item').forEach(i => i.classList.remove('selected'))
       item.classList.add('selected')
       selectedAvatar = avatar
+      // Gallery pick and custom upload are mutually exclusive.
+      selectedAvatarFile = null
+      resetCreateAvatarUpload()
     })
     grid.appendChild(item)
   }
@@ -1098,7 +1102,9 @@ function resetWizard() {
   agentModel.value = 'inherit'
   loadAvailableModels()
   selectedAvatar = null
+  selectedAvatarFile = null
   document.querySelectorAll('#avatarGrid .avatar-grid-item').forEach(i => i.classList.remove('selected'))
+  resetCreateAvatarUpload()
   generatedClaudeMd = ''
   generatedSoulMd = ''
   wizardCreatedName = ''
@@ -1174,8 +1180,16 @@ document.getElementById('wizardNextBtn').addEventListener('click', async () => {
 
     statusEl.textContent = 'Kész!'
 
-    // Set gallery avatar if selected
-    if (selectedAvatar) {
+    // Apply the chosen avatar. Custom upload wins over a gallery pick; both go
+    // to the same endpoint (FormData for a file, JSON for a gallery name).
+    if (selectedAvatarFile) {
+      const form = new FormData()
+      form.append('avatar', selectedAvatarFile, selectedAvatarFile.name)
+      await fetch(`/api/agents/${encodeURIComponent(createdName)}/avatar`, {
+        method: 'POST',
+        body: form,
+      })
+    } else if (selectedAvatar) {
       await fetch(`/api/agents/${encodeURIComponent(createdName)}/avatar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1768,6 +1782,69 @@ document.getElementById('avatarChangeBtn').addEventListener('click', () => {
       showToast('Hiba a feltöltés során')
       resetAvatarUpload()
     }
+  }
+})()
+
+// === Create-wizard avatar upload ===
+// Mirrors the detail-modal uploader, but the agent does not exist yet, so the
+// file is held in `selectedAvatarFile` and POSTed after creation (see the
+// wizard create flow). Hoisted so populateAvatarGrid()/resetWizard() can reset.
+function resetCreateAvatarUpload() {
+  const fileInput = document.getElementById('createAvatarFileInput')
+  const content = document.getElementById('createAvatarUploadContent')
+  const preview = document.getElementById('createAvatarUploadPreview')
+  if (!fileInput || !content || !preview) return
+  fileInput.value = ''
+  content.hidden = false
+  preview.hidden = true
+}
+;(() => {
+  const zone = document.getElementById('createAvatarUploadZone')
+  if (!zone) return
+  const fileInput = document.getElementById('createAvatarFileInput')
+  const content = document.getElementById('createAvatarUploadContent')
+  const preview = document.getElementById('createAvatarUploadPreview')
+  const previewImg = document.getElementById('createAvatarPreviewImg')
+  const clearBtn = document.getElementById('createAvatarPreviewClear')
+  const MAX_SIZE = 1024 * 1024
+
+  zone.addEventListener('click', (e) => {
+    if (e.target === clearBtn || clearBtn.contains(e.target)) return
+    fileInput.click()
+  })
+  zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over') })
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'))
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault()
+    zone.classList.remove('drag-over')
+    const file = e.dataTransfer.files[0]
+    if (file) handleCreateAvatarFile(file)
+  })
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) handleCreateAvatarFile(fileInput.files[0])
+  })
+  clearBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    selectedAvatarFile = null
+    resetCreateAvatarUpload()
+  })
+
+  function handleCreateAvatarFile(file) {
+    if (!file.type.match(/^image\/(png|jpe?g|webp)$/)) {
+      showToast('Csak png/jpg/webp formátum')
+      return
+    }
+    if (file.size > MAX_SIZE) {
+      showToast('Max 1 MB méretű kép')
+      return
+    }
+    // Custom upload and gallery pick are mutually exclusive.
+    selectedAvatar = null
+    document.querySelectorAll('#avatarGrid .avatar-grid-item').forEach(i => i.classList.remove('selected'))
+    selectedAvatarFile = file
+    previewImg.src = URL.createObjectURL(file)
+    content.hidden = true
+    preview.hidden = false
   }
 })()
 
