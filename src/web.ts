@@ -17,11 +17,14 @@ import { startInboundProber } from './web/inbound-probe.js'
 import { startChannelHealthMonitor } from './web/channel-health-monitor.js'
 import { startStuckInputWatcher } from './web/stuck-input-watcher.js'
 import { startStuckToolCallWatcher } from './web/stuck-tool-call-watcher.js'
+import { startReauthHealer } from './web/reauth-healer.js'
 import { startAutoRestartRunner } from './web/auto-restart-runner.js'
 import { logger } from './logger.js'
 import { tryHandleProfiles } from './web/routes/profiles.js'
 import { tryHandleMessages } from './web/routes/messages.js'
 import { tryHandleAgentTerminal } from './web/routes/agent-terminal.js'
+import { tryHandleAgentTaskState } from './web/routes/agent-taskstate.js'
+import { sweepOrphanTaskStates } from './web/agent-taskstate.js'
 import { tryHandleDailyLog } from './web/routes/daily-log.js'
 import { tryHandleMemories } from './web/routes/memories.js'
 import { tryHandleMigrate } from './web/routes/migrate.js'
@@ -134,6 +137,7 @@ export function startWebServer(port = 3420): http.Server {
       if (await tryHandleAgentsSkills(routeCtx)) return
       if (await tryHandleSkills(routeCtx)) return
       if (await tryHandleAgentTerminal(routeCtx)) return
+      if (await tryHandleAgentTaskState(routeCtx)) return
       if (await tryHandleAgents(routeCtx, WEB_DIR)) return
       if (await tryHandleMarveen(routeCtx, WEB_DIR)) return
       if (await tryHandleBackgroundTasks(routeCtx)) return
@@ -249,6 +253,9 @@ export function startWebServer(port = 3420): http.Server {
   const stuckToolCallInterval = startStuckToolCallWatcher()
   logger.info('Stuck-tool-call watcher started (30s poll, 35s offset)')
 
+  const reauthHealerInterval = startReauthHealer()
+  if (reauthHealerInterval) logger.info('Reauth healer started (3min poll, 90s offset)')
+
   const autoRestartInterval = startAutoRestartRunner()
   logger.info('Auto-restart runner started (60s poll, 40s offset)')
 
@@ -292,6 +299,13 @@ export function startWebServer(port = 3420): http.Server {
     logger.warn({ err }, 'Background task sweep skipped')
   }
 
+  try {
+    const swept = sweepOrphanTaskStates(Date.now())
+    if (swept > 0) logger.info({ swept }, 'Orphan agent task-state records swept')
+  } catch (err) {
+    logger.warn({ err }, 'Task-state orphan sweep skipped')
+  }
+
   const origClose = server.close.bind(server)
   server.close = (cb?: (err?: Error) => void) => {
     clearInterval(routerInterval)
@@ -300,6 +314,7 @@ export function startWebServer(port = 3420): http.Server {
     clearInterval(channelHealthInterval)
     clearInterval(stuckInputInterval)
     clearInterval(stuckToolCallInterval)
+    if (reauthHealerInterval) clearInterval(reauthHealerInterval)
     clearInterval(autoRestartInterval)
     clearInterval(updateCheckerInterval)
     return origClose(cb)
