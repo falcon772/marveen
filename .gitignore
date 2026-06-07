@@ -62,6 +62,11 @@ DREAM.md
 .external-ops-last-run
 REBUILD_PROMPT_V3.1.md
 
+# Operator's branded support auto-reply. The shipped support-mail tooling is a
+# generic IMAP/SMTP CLI (no operator data); each operator keeps their own
+# branded auto-reply here locally. Ignored so it never ships to other installs.
+scripts/support-mail/no-support-reply.html
+
 # Python bytecode cache
 __pycache__/
 *.pyc
