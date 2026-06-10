@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildWorkerPrompt, decidePoll } from '../web/agent-worker.js'
+import { buildWorkerPrompt, decidePoll, configDirKeychainService } from '../web/agent-worker.js'
 
 // Pure-logic tests for the interactive-tmux worker that backs runAgent on the
 // subscription (jun.15 migration). The live-session orchestration is exercised
@@ -53,5 +53,24 @@ describe('decidePoll', () => {
 
   it('keeps waiting while alive, before the deadline, with no done yet', () => {
     expect(decidePoll({ ...base, elapsedMs: 500 })).toBe('wait')
+  })
+})
+
+describe('configDirKeychainService', () => {
+  // Locked vector: macOS Claude Code reads the OAuth token from a Keychain
+  // service named "Claude Code-credentials-<sha256(CLAUDE_CONFIG_DIR)[0:8]>"
+  // and it SHADOWS <CONFIG_DIR>/.credentials.json. The worker auth-recovery
+  // deletes this exact entry so the freshly-seeded file becomes authoritative.
+  // Verified live 2026-06-10 against the marveen-worker config dir.
+  it('derives the sha256[0:8] service suffix (verified live vector)', () => {
+    expect(configDirKeychainService('/Users/marvin/.marveen-worker/.claude-config'))
+      .toBe('Claude Code-credentials-1d2e1367')
+  })
+
+  it('is path-specific: a different config dir hashes to a different service', () => {
+    const a = configDirKeychainService('/Users/marvin/.marveen-worker/.claude-config')
+    const b = configDirKeychainService('/tmp/some-other-config')
+    expect(a).not.toBe(b)
+    expect(b.startsWith('Claude Code-credentials-')).toBe(true)
   })
 })

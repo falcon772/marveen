@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync, readdirSync, lstatSync, symlinkSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, userInfo } from 'node:os'
+import { createHash } from 'node:crypto'
 import { resolveFromPath } from '../platform.js'
 import { logger } from '../logger.js'
 import { PROJECT_ROOT } from '../config.js'
@@ -57,6 +58,81 @@ const WORKER_DISABLED_PLUGINS = ['telegram', 'slack-channel']
 //  - settings.json: we own it (enabledPlugins:{} override).
 //  - CLAUDE.md: skipped so global user memory never tints one-shot gens (refinement #1).
 const WORKER_CONFIG_SKIP = new Set(['settings.json', 'CLAUDE.md', '.DS_Store', '.lock'])
+
+// =============================================================================
+// macOS auth precedence (discovered 2026-06-10 debugging the worker 401):
+// when CLAUDE_CONFIG_DIR is a non-default path, Claude Code reads the OAuth
+// token from a PATH-HASHED macOS Keychain service:
+//     "Claude Code-credentials-<sha256(CLAUDE_CONFIG_DIR)[0:8]>"  (acct = $USER)
+// and this Keychain entry takes PRECEDENCE over <CONFIG_DIR>/.credentials.json.
+// The interactive worker wrote this entry on a prior login; its access token
+// then expired, and Claude kept reading the STALE Keychain entry -- ignoring a
+// freshly re-seeded .credentials.json -- which is the silent 401 from the bake.
+//
+// Fix: the file must be authoritative. We (1) re-seed .credentials.json from the
+// host's default `Claude Code-credentials` Keychain entry (which the host's own
+// interactive sessions keep fresh), and (2) DELETE the path-hashed Keychain
+// entry so Claude falls back to the fresh file. Verified: with the path-hashed
+// entry absent, the worker config dir authenticates from the file; a `-p` run
+// does not recreate it. See [[claude-config-dir-isolation-auth]].
+// =============================================================================
+
+// Claude Code prints these in its own error chrome when auth is dead. Matched
+// against the pane TAIL only (its status area), so unrelated task content
+// deeper in scrollback that merely mentions "401" does not false-trip.
+const WORKER_AUTH_FAILURE_RX =
+  /Please run \/login|Not logged in|Invalid bearer token|Invalid authentication credentials|API Error:\s*401|OAuth (?:token|authentication) (?:has )?expired|Failed to authenticate/i
+
+/**
+ * The macOS Keychain service name Claude Code uses for a given CLAUDE_CONFIG_DIR.
+ * sha256(configDir)[0:8] suffix -- reverse-engineered + verified 2026-06-10
+ * against the live worker (sha256("/Users/marvin/.marveen-worker/.claude-config")
+ * -> "1d2e1367"). Pure + exported so the locked test vector guards the algorithm.
+ */
+export function configDirKeychainService(configDir: string): string {
+  const suffix = createHash('sha256').update(configDir).digest('hex').slice(0, 8)
+  return `Claude Code-credentials-${suffix}`
+}
+
+function workerKeychainService(): string {
+  return configDirKeychainService(WORKER_CONFIG_DIR)
+}
+
+/** Delete the worker's path-hashed Keychain entry so .credentials.json is the
+ * authoritative source. No-op if absent. Never touches the host default entry. */
+function clearWorkerKeychainEntry(): void {
+  try {
+    execFileSync('/usr/bin/security',
+      ['delete-generic-password', '-s', workerKeychainService(), '-a', userInfo().username],
+      { timeout: 3000, stdio: ['ignore', 'ignore', 'ignore'] })
+  } catch { /* absent -> nothing to clear */ }
+}
+
+/**
+ * Make the worker's file-based credentials authoritative + fresh:
+ *  1. materialise the host's current login JSON as <CONFIG_DIR>/.credentials.json
+ *     (the host keeps its `Claude Code-credentials` token fresh);
+ *  2. delete the stale path-hashed Keychain entry that would otherwise shadow it.
+ * Cheap (two `security` calls) so it is safe to run before every (re)boot. Off
+ * macOS readClaudeCodeOauthJson returns null and the worker runs logged-out.
+ * Returns true if a credential file was written.
+ */
+function seedWorkerCredentials(): boolean {
+  if (process.platform === 'darwin') clearWorkerKeychainEntry()
+  const credentialsJson = readClaudeCodeOauthJson()
+  if (!credentialsJson) return false
+  if (!existsSync(WORKER_CONFIG_DIR)) mkdirSync(WORKER_CONFIG_DIR, { recursive: true })
+  writeFileSync(join(WORKER_CONFIG_DIR, '.credentials.json'), credentialsJson, { mode: 0o600 })
+  return true
+}
+
+/** Scan the worker pane tail for Claude Code's auth-failure chrome. */
+function workerPaneHasAuthFailure(): boolean {
+  const pane = capturePane(WORKER_SESSION)
+  if (!pane) return false
+  const tail = pane.split('\n').slice(-30).join('\n')
+  return WORKER_AUTH_FAILURE_RX.test(tail)
+}
 
 // --- pure, unit-testable logic -------------------------------------------------
 
@@ -186,11 +262,10 @@ export function ensureWorkerCwd(): void {
   // --dangerously-skip-permissions) reaches its prompt without a blocking modal.
   writeFileSync(settingsPath, JSON.stringify({ ...current, enabledPlugins, skipDangerousModePermissionPrompt: true }, null, 2) + '\n')
 
-  // Subscription auth: materialise the host login JSON as .credentials.json.
-  const credentialsJson = readClaudeCodeOauthJson()
-  if (credentialsJson) {
-    writeFileSync(join(WORKER_CONFIG_DIR, '.credentials.json'), credentialsJson, { mode: 0o600 })
-  }
+  // Subscription auth: materialise the host login JSON as .credentials.json AND
+  // clear the stale path-hashed Keychain entry that would shadow it (see the
+  // macOS auth-precedence note at the top of this file).
+  seedWorkerCredentials()
 
   // Inherit project-scoped MCP servers under the worker's own cwd key, AND
   // pre-accept the first-run dialogs so the headless interactive session never
@@ -283,53 +358,93 @@ function nextReqId(): string {
   return `${Date.now().toString(36)}-${reqCounter}`
 }
 
+// Outcome of one worker attempt. 'auth' is split out from 'fail' so the caller
+// can recover (reseed + restart) once, then signal an SDK fallback.
+type AttemptResult =
+  | { kind: 'ok'; text: string | null; error?: string }
+  | { kind: 'auth' }
+  | { kind: 'fail'; error: string }
+
+async function runWorkerAttempt(message: string, timeoutMs: number): Promise<AttemptResult> {
+  const ready = await ensureWorkerReady()
+  if (!ready) {
+    // A non-ready worker can be a dead auth (the session boots, prints the
+    // login/401 chrome, never reaches an idle prompt) -- distinguish it.
+    if (workerPaneHasAuthFailure()) return { kind: 'auth' }
+    logger.warn('agent-worker: worker not ready, failing request (text=null)')
+    return { kind: 'fail', error: 'worker session not ready' }
+  }
+
+  const reqId = nextReqId()
+  const outPath = join(SCRATCH_DIR, `${reqId}.out`)
+  const donePath = join(SCRATCH_DIR, `${reqId}.done`)
+  for (const p of [outPath, donePath]) { try { rmSync(p, { force: true }) } catch { /* none */ } }
+
+  clearWorkerContext()
+  sendPromptToSession(WORKER_SESSION, buildWorkerPrompt(message, outPath, donePath))
+
+  const start = Date.now()
+  try {
+    while (true) {
+      await sleepMs(CAPTURE_POLL_MS)
+      const decision = decidePoll({
+        doneExists: existsSync(donePath),
+        sessionAlive: workerSessionExists(),
+        elapsedMs: Date.now() - start,
+        timeoutMs,
+      })
+      if (decision === 'ready') {
+        const text = existsSync(outPath) ? readFileSync(outPath, 'utf-8') : null
+        return { kind: 'ok', text: text && text.trim() ? text : null, error: text && text.trim() ? undefined : 'worker produced empty output' }
+      }
+      // Not done yet: catch a mid-flight auth failure (the access token can
+      // expire while the session is up) BEFORE burning the full timeout.
+      if (workerPaneHasAuthFailure()) {
+        logger.warn({ reqId }, 'agent-worker: auth failure detected mid-request')
+        return { kind: 'auth' }
+      }
+      if (decision === 'timeout') {
+        logger.warn({ reqId, timeoutMs }, 'agent-worker: request timed out')
+        return { kind: 'fail', error: `worker timeout after ${Math.round(timeoutMs / 1000)}s` }
+      }
+      if (decision === 'dead') {
+        logger.warn({ reqId }, 'agent-worker: session died mid-request, restarting (fail-fast)')
+        restartWorkerSession()
+        return { kind: 'fail', error: 'worker session died mid-request' }
+      }
+    }
+  } finally {
+    for (const p of [outPath, donePath]) { try { rmSync(p, { force: true }) } catch { /* best effort */ } }
+  }
+}
+
 /**
  * Run one prompt through the interactive worker and return its text output.
  * Serialized via the worker mutex. Returns text=null + error on timeout, a
  * mid-flight worker death (fail-fast + restart), or a non-ready worker.
+ *
+ * Auth self-healing: on an auth failure (stale path-hashed Keychain token /
+ * expired login) the worker re-seeds its credentials, clears the shadowing
+ * Keychain entry, restarts, and retries ONCE. If it still fails, it returns
+ * authFailed=true so runAgent can fall back to the SDK backend for this call
+ * rather than dying silently (the 2026-06-10 bake failure mode).
  */
-export async function runViaWorker(message: string, timeoutMs: number): Promise<{ text: string | null; error?: string }> {
+export async function runViaWorker(message: string, timeoutMs: number): Promise<{ text: string | null; error?: string; authFailed?: boolean }> {
   return withWorkerLock(async () => {
-    const ready = await ensureWorkerReady()
-    if (!ready) {
-      logger.warn('agent-worker: worker not ready, failing request (text=null)')
-      return { text: null, error: 'worker session not ready' }
-    }
-
-    const reqId = nextReqId()
-    const outPath = join(SCRATCH_DIR, `${reqId}.out`)
-    const donePath = join(SCRATCH_DIR, `${reqId}.done`)
-    for (const p of [outPath, donePath]) { try { rmSync(p, { force: true }) } catch { /* none */ } }
-
-    clearWorkerContext()
-    sendPromptToSession(WORKER_SESSION, buildWorkerPrompt(message, outPath, donePath))
-
-    const start = Date.now()
-    try {
-      while (true) {
-        await sleepMs(CAPTURE_POLL_MS)
-        const decision = decidePoll({
-          doneExists: existsSync(donePath),
-          sessionAlive: workerSessionExists(),
-          elapsedMs: Date.now() - start,
-          timeoutMs,
-        })
-        if (decision === 'ready') {
-          const text = existsSync(outPath) ? readFileSync(outPath, 'utf-8') : null
-          return { text: text && text.trim() ? text : null, error: text && text.trim() ? undefined : 'worker produced empty output' }
-        }
-        if (decision === 'timeout') {
-          logger.warn({ reqId, timeoutMs }, 'agent-worker: request timed out')
-          return { text: null, error: `worker timeout after ${Math.round(timeoutMs / 1000)}s` }
-        }
-        if (decision === 'dead') {
-          logger.warn({ reqId }, 'agent-worker: session died mid-request, restarting (fail-fast)')
-          restartWorkerSession()
-          return { text: null, error: 'worker session died mid-request' }
-        }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const r = await runWorkerAttempt(message, timeoutMs)
+      if (r.kind === 'ok') return { text: r.text, error: r.error }
+      if (r.kind === 'fail') return { text: null, error: r.error }
+      // r.kind === 'auth'
+      if (attempt === 0) {
+        logger.warn('agent-worker: auth failure -> recovering (reseed creds + clear keychain + restart)')
+        seedWorkerCredentials()
+        restartWorkerSession()
+        continue
       }
-    } finally {
-      for (const p of [outPath, donePath]) { try { rmSync(p, { force: true }) } catch { /* best effort */ } }
+      logger.error('agent-worker: auth failure persists after recovery -> signalling SDK fallback (authFailed)')
+      return { text: null, error: 'worker auth failed (401/login) after recovery', authFailed: true }
     }
+    return { text: null, error: 'worker auth failed', authFailed: true }
   })
 }

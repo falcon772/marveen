@@ -129,8 +129,13 @@ export async function runAgent(
     // and avoids any load-order coupling.
     if (sessionId) logger.warn('runAgent(worker): resume/sessionId not supported on worker backend, ignoring')
     const { runViaWorker } = await import('./web/agent-worker.js')
-    const { text, error } = await runViaWorker(message, AGENT_TIMEOUT_MS)
-    return { text, error }
+    const { text, error, authFailed } = await runViaWorker(message, AGENT_TIMEOUT_MS)
+    // authFailed = the worker could not recover its subscription auth even after
+    // a reseed + clear-keychain + restart + retry. Fall through to the SDK path
+    // so the call still completes (API billing) instead of dying silently (the
+    // 2026-06-10 bake failure mode). Every other outcome returns as-is.
+    if (!authFailed) return { text, error }
+    logger.error('runAgent: worker auth unrecoverable, falling back to SDK backend for this call (API billing)')
   }
   // --- legacy SDK path (rollback: MARVEEN_AGENT_BACKEND=sdk; API billing) ---
   let newSessionId: string | undefined
