@@ -126,7 +126,7 @@ export async function installGitHubRepo(
   if (hasPackageJson) {
     onProgress?.({ stage: 'installing', message: 'Running npm install...' })
     try {
-      execSync('npm install --production 2>&1', {
+      execSync('npm install --ignore-scripts --production 2>&1', {
         cwd: targetDir,
         timeout: 180000,
         encoding: 'utf-8',
@@ -189,7 +189,7 @@ export function updateGitHubRepo(name: string): { ok: boolean, error?: string } 
   try {
     execSync('git pull --ff-only 2>&1', { cwd: repo.path, timeout: 60000, encoding: 'utf-8', stdio: 'pipe' })
     if (existsSync(join(repo.path, 'package.json'))) {
-      execSync('npm install --production 2>&1', { cwd: repo.path, timeout: 120000, encoding: 'utf-8', stdio: 'pipe' })
+      execSync('npm install --ignore-scripts --production 2>&1', { cwd: repo.path, timeout: 120000, encoding: 'utf-8', stdio: 'pipe' })
     }
     return { ok: true }
   } catch (err: any) {
