@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { PROJECT_ROOT, MAIN_AGENT_ID } from '../config.js'
 import { atomicWriteFileSync } from './atomic-write.js'
 import { safeJoin } from './sanitize.js'
+import { getSecret } from './vault.js'
 
 export const AGENTS_BASE_DIR = join(PROJECT_ROOT, 'agents')
 
@@ -15,6 +16,33 @@ export const MODEL_ALIASES: Record<string, string> = {
   'sonnet': 'claude-sonnet-4-6',
   'haiku': 'claude-haiku-4-5-20251001',
   'inherit': DEFAULT_MODEL,
+}
+
+// Single source of truth for "every model id the dashboard is willing to
+// hand to an agent". Shared by GET /api/models/available (what the UI offers)
+// and the write-time allowlist guard (what writeAgentModel will accept) so
+// the two can never drift apart -- e.g. DeepSeek silently being listed but
+// not validated, or vice versa. The `[1m]` suffix is part of the id itself,
+// not a separable modifier: ids are compared by exact string match only.
+export function availableModelIds(): string[] {
+  const ids = ['claude-fable-5', 'claude-opus-4-8[1m]', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001']
+  if (getSecret('DEEPSEEK_API_KEY') !== null) {
+    ids.push('deepseek-v4-pro', 'deepseek-v4-flash')
+  }
+  return ids
+}
+
+// Write-time guard for the `model` field (audit #2: an unvalidated model
+// string was written straight into agent-config.json and later interpolated
+// into a launcher shell command, so a value containing `'` could break out
+// and run arbitrary shell). Resolves aliases first (so `opus`/`sonnet`/etc.
+// keep working), then requires an EXACT match against availableModelIds() --
+// no suffix-stripping, so a made-up `claude-sonnet-4-6[1m]` is rejected even
+// though `claude-sonnet-4-6` itself is valid.
+export function isAllowedModel(raw: string): boolean {
+  if (typeof raw !== 'string' || !raw) return false
+  const resolved = resolveModelId(raw)
+  return availableModelIds().includes(resolved)
 }
 
 export function agentDir(name: string): string {

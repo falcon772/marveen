@@ -21,6 +21,7 @@ import {
   sessionInList,
   ensureControlDir,
   cleanStaleSshSockets,
+  shQuote,
   type AgentRunState,
 } from './ssh-tmux.js'
 import { parseTelegramToken } from './telegram.js'
@@ -318,9 +319,13 @@ export function startAgentProcess(name: string, opts: { fresh?: boolean } = {}):
       ? `export ${stateEnvVar}="${agentChannelDir}"${auditLogEnv} && `
       : ''
     const channelFlag = hasChannel ? `--channels plugin:${provider.pluginId}` : ''
-    // Single-quote `${model}` so values like `claude-opus-4-8[1m]` (1M-context
-    // suffix) are not glob-expanded by the shell that tmux spawns the command in.
-    const cmd = `export PATH="/opt/homebrew/bin:$HOME/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH" && ${unsetTokens} && ${channelSetup}${apiKeyEnv}${claudeConfigEnv}${ollamaEnv}${deepseekEnv}cd "${dir}" && ${CLAUDE} ${continueFlag}${skipFlag}--model '${model}' ${channelFlag}`.trimEnd()
+    // shQuote (not a naive `'${model}'` literal) so a model value containing an
+    // embedded `'` cannot break out of the quoted region and inject shell syntax
+    // into the command tmux spawns -- the same POSIX single-quote escaping the
+    // remote launch path already uses (see ssh-tmux.ts). `model` is additionally
+    // allowlist-validated at write time (see agent-config.ts:isAllowedModel), so
+    // this is defense-in-depth, not the only barrier.
+    const cmd = `export PATH="/opt/homebrew/bin:$HOME/.bun/bin:/usr/local/bin:/usr/bin:/bin:$PATH" && ${unsetTokens} && ${channelSetup}${apiKeyEnv}${claudeConfigEnv}${ollamaEnv}${deepseekEnv}cd "${dir}" && ${CLAUDE} ${continueFlag}${skipFlag}--model ${shQuote(model)} ${channelFlag}`.trimEnd()
     runTmux(null, ['new-session', '-d', '-s', session, cmd], { timeout: 10000 })
 
     logger.info({ name, session, channelDir: agentChannelDir }, 'Agent tmux session started')

@@ -15,6 +15,8 @@ import {
   extractDescriptionFromClaudeMd,
   findAvatarForAgent,
   resolveModelId,
+  availableModelIds,
+  isAllowedModel,
   readAgentModel,
   writeAgentModel,
   readAgentDisplayName,
@@ -424,18 +426,21 @@ export async function tryHandleAgents(ctx: RouteContext, webDir: string): Promis
   // both in the "new agent" wizard and the agent edit panel.
   if (path === '/api/models/available' && method === 'GET') {
     const hasDeepseek = getSecret('DEEPSEEK_API_KEY') !== null
+    const ids = new Set(availableModelIds())
+    const claudeLabels: Record<string, string> = {
+      'claude-fable-5': 'Fable 5 (legújabb)',
+      'claude-opus-4-8[1m]': 'Opus 4.8 (1M kontextus, alapértelmezett)',
+      'claude-sonnet-4-6': 'Sonnet 4.6',
+      'claude-haiku-4-5-20251001': 'Haiku 4.5 (leggyorsabb)',
+    }
+    const deepseekLabels: Record<string, string> = {
+      'deepseek-v4-pro': 'DeepSeek-V4-Pro (1M kontextus, erősebb)',
+      'deepseek-v4-flash': 'DeepSeek-V4-Flash (1M kontextus, gyorsabb/olcsóbb)',
+    }
     json(res, {
-      claude: [
-        { id: 'claude-fable-5', label: 'Fable 5 (legújabb)' },
-        { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 (1M kontextus, alapértelmezett)' },
-        { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-        { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 (leggyorsabb)' },
-      ],
+      claude: Object.keys(claudeLabels).filter(id => ids.has(id)).map(id => ({ id, label: claudeLabels[id] })),
       deepseek: hasDeepseek
-        ? [
-            { id: 'deepseek-v4-pro', label: 'DeepSeek-V4-Pro (1M kontextus, erősebb)' },
-            { id: 'deepseek-v4-flash', label: 'DeepSeek-V4-Flash (1M kontextus, gyorsabb/olcsóbb)' },
-          ]
+        ? Object.keys(deepseekLabels).filter(id => ids.has(id)).map(id => ({ id, label: deepseekLabels[id] }))
         : [],
       deepseekConfigured: hasDeepseek,
     })
@@ -512,11 +517,13 @@ export async function tryHandleAgents(ctx: RouteContext, webDir: string): Promis
     const { description, model: rawModel, profile: rawProfile } = data as { name: string; description: string; model?: string; profile?: string }
     const rawName = typeof data.name === 'string' ? data.name.trim() : ''
     const name = sanitizeAgentName(rawName)
-    const model = resolveModelId(rawModel || DEFAULT_MODEL)
+    const requestedModel = rawModel || DEFAULT_MODEL
+    const model = resolveModelId(requestedModel)
     const profileId = (rawProfile || 'default').trim() || 'default'
 
     if (!name) { json(res, { error: 'Name is required' }, 400); return true }
     if (!description) { json(res, { error: 'Description is required' }, 400); return true }
+    if (!isAllowedModel(requestedModel)) { json(res, { error: 'Unsupported model' }, 400); return true }
     if (existsSync(agentDir(name))) { json(res, { error: 'Agent already exists' }, 409); return true }
 
     scaffoldAgentDir(name)
@@ -1338,7 +1345,13 @@ export async function tryHandleAgents(ctx: RouteContext, webDir: string): Promis
     if (data.claudeMd !== undefined) atomicWriteFileSync(join(configRoot, 'CLAUDE.md'), data.claudeMd)
     if (data.soulMd !== undefined) atomicWriteFileSync(join(agentDir(name), 'SOUL.md'), data.soulMd)
     if (data.mcpJson !== undefined) atomicWriteFileSync(join(agentDir(name), '.mcp.json'), data.mcpJson)
-    if (data.model !== undefined) writeAgentModel(name, data.model)
+    if (data.model !== undefined) {
+      if (typeof data.model !== 'string' || !isAllowedModel(data.model)) {
+        json(res, { error: 'Unsupported model' }, 400)
+        return true
+      }
+      writeAgentModel(name, resolveModelId(data.model))
+    }
     if (data.authMode !== undefined) {
       writeAgentAuthMode(name, data.authMode)
       if (data.authMode === 'api' && typeof data.apiKey === 'string' && data.apiKey.trim()) {
