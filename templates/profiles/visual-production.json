@@ -1,7 +1,7 @@
 {
-  "id": "researcher",
-  "label": "Kutató",
-  "description": "Piackutatás, versenytárs-elemzés, webes források olvasása. Prompt injection szempontból ugyanúgy kiemelt mint a marketinges. Draft-only: riportot ír a mappájába, nem küld magától kifelé.",
+  "id": "visual-production",
+  "label": "Vizuális produkció (könnyű)",
+  "description": "Felület- és élménytervezés (UX/UI) + könnyű vizuális asset. A saját mappájába (és annak assets almappájába) ír, nem posztol kifelé. Alacsony egress. A képgeneráló/asset connector az ügynökönkénti .mcp.json-ban dől el. A DED osztja ezt a profilt.",
   "permissionMode": "strict",
   "filesystem": {
     "allow": [
@@ -10,9 +10,7 @@
       "Edit(${AGENT_DIR}/**)",
       "Read(${HOME}/Downloads/**)",
       "Bash(ls:*)",
-      "Bash(cat:*)",
-      "WebFetch(*)",
-      "WebSearch(*)"
+      "Bash(cat:*)"
     ],
     "deny": [
       "Read(${HOME}/.ssh/**)",
@@ -22,8 +20,7 @@
       "Read(**/.env)",
       "Bash(sudo:*)",
       "Bash(rm:*)",
-      "Bash(curl -X POST:*)",
-      "Bash(git push:*)"
+      "Bash(curl -X POST:*)"
     ]
   }
 }

@@ -1,7 +1,7 @@
 {
-  "id": "developer-junior",
-  "label": "Fejlesztő (junior)",
-  "description": "Feature-fejlesztésre saját branch-en. A main/master-re tiltott push, sudo tiltott, SSH/AWS kulcsok elrejtve. Csak a saját munkakönyvtárába írhat.",
+  "id": "developer-sandbox",
+  "label": "Fejlesztő (elszigetelt)",
+  "description": "Kód-fejlesztés a saját, elszigetelt munkamappában. A main/master-re tiltott a push, sudo tiltva, SSH/AWS/GnuPG kulcsok elrejtve. Csak a saját mappájába ír. A TSD (fejlesztő) és a SAE (automatizáló) osztja ezt a profilt; az éles kifelé-hatás (telepítés/indítás) kapuzott, nem az ügynök végzi élőben.",
   "permissionMode": "strict",
   "filesystem": {
     "allow": [

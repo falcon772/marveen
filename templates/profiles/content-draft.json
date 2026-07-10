@@ -1,0 +1,29 @@
+{
+  "id": "content-draft",
+  "label": "Tartalom / marketing (csak piszkozat)",
+  "description": "Blog, hírlevél, social szöveg, affiliate-program kutatás. Webes tartalmat olvas (prompt injection felület), ezért szigorúan korlátozott: csak a saját mappájába ír piszkozatot, a publikálás és a levélküldés NEM ide tartozik (az kapuzott/emberi jóváhagyású lépés). Titok-fájlok és nyers HTTP-küldés tiltva. A CMS osztja ezt a profilt.",
+  "permissionMode": "strict",
+  "filesystem": {
+    "allow": [
+      "Read(${AGENT_DIR}/**)",
+      "Write(${AGENT_DIR}/**)",
+      "Edit(${AGENT_DIR}/**)",
+      "Read(${HOME}/Downloads/**)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)"
+    ],
+    "deny": [
+      "Read(${HOME}/.ssh/**)",
+      "Read(${HOME}/.aws/**)",
+      "Read(${HOME}/.gnupg/**)",
+      "Read(${HOME}/.env)",
+      "Read(**/.env)",
+      "Bash(sudo:*)",
+      "Bash(rm:*)",
+      "Bash(curl -X POST:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}

@@ -96,6 +96,8 @@ import type { AutoRestartConfig } from '../../auto-restart.js'
 import { attemptChannelMcpReconnect } from '../channel-mcp-reconnect.js'
 import { getChannelHealth } from '../channel-health-monitor.js'
 import {
+  HARDCODED_DEFAULT_PROFILE,
+  listProfileTemplates,
   loadProfileTemplate,
   resolveProfilePlaceholders,
 } from '../profiles.js'
@@ -519,7 +521,13 @@ export async function tryHandleAgents(ctx: RouteContext, webDir: string): Promis
     const name = sanitizeAgentName(rawName)
     const requestedModel = rawModel || DEFAULT_MODEL
     const model = resolveModelId(requestedModel)
-    const profileId = (rawProfile || 'default').trim() || 'default'
+    const requestedProfileId = (rawProfile || HARDCODED_DEFAULT_PROFILE.id).trim() || HARDCODED_DEFAULT_PROFILE.id
+    const knownProfileIds = new Set(listProfileTemplates().map(p => p.id))
+    let profileId = requestedProfileId
+    if (!knownProfileIds.has(profileId)) {
+      logger.warn({ requestedProfileId }, 'Unknown or missing agent profile requested; coercing to strict fallback')
+      profileId = HARDCODED_DEFAULT_PROFILE.id
+    }
 
     if (!name) { json(res, { error: 'Name is required' }, 400); return true }
     if (!description) { json(res, { error: 'Description is required' }, 400); return true }

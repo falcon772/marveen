@@ -21,9 +21,22 @@ export const PROFILES_DIR = join(PROJECT_ROOT, 'templates', 'profiles')
 export const HARDCODED_DEFAULT_PROFILE: ProfileTemplate = {
   id: 'default',
   label: 'Alapértelmezett',
-  description: 'Permissive fallback.',
-  permissionMode: 'permissive',
-  filesystem: { allow: [], deny: [] },
+  description: 'Strict fail-closed fallback used when no valid profile is resolved.',
+  permissionMode: 'strict',
+  filesystem: {
+    allow: [],
+    deny: [
+      'Read(${HOME}/.ssh/**)',
+      'Read(${HOME}/.aws/**)',
+      'Read(${HOME}/.gnupg/**)',
+      'Read(${HOME}/.env)',
+      'Read(**/.env)',
+      'Bash(sudo:*)',
+      'Bash(rm:*)',
+      'Bash(curl -X POST:*)',
+      'Bash(git push:*)',
+    ],
+  },
 }
 
 export function listProfileTemplates(): ProfileTemplate[] {
