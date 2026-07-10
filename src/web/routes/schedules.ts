@@ -17,7 +17,7 @@ import {
   SCHEDULED_TASKS_DIR, MAX_SCHEDULED_TASK_PROMPT_LEN,
   listScheduledTasks, writeScheduledTask,
 } from '../scheduled-tasks-io.js'
-import { runScheduledTaskNow } from '../schedule-runner.js'
+import { runScheduledTaskNow, isAllowedTargetSession } from '../schedule-runner.js'
 import type { RouteContext } from './types.js'
 
 export async function tryHandleSchedules(ctx: RouteContext): Promise<boolean> {
@@ -124,6 +124,9 @@ Az eredmeny CSAK a kibovitett prompt szovege legyen, semmi mas. Ne hasznalj code
     }
     if (!data.schedule?.trim()) { json(res, { error: 'Schedule is required' }, 400); return true }
     if (!isValidCronShape(data.schedule)) { json(res, { error: 'Invalid cron expression' }, 400); return true }
+    if (data.targetSession && !isAllowedTargetSession(data.targetSession)) {
+      json(res, { error: 'Invalid targetSession: must be a known agent session' }, 400); return true
+    }
 
     const dir = join(SCHEDULED_TASKS_DIR, name)
     if (existsSync(dir)) { json(res, { error: 'Schedule already exists' }, 409); return true }
@@ -171,6 +174,10 @@ Az eredmeny CSAK a kibovitett prompt szovege legyen, semmi mas. Ne hasznalj code
     }
     if (data.schedule !== undefined && !isValidCronShape(data.schedule)) {
       json(res, { error: 'Invalid cron expression' }, 400)
+      return true
+    }
+    if (data.targetSession && !isAllowedTargetSession(data.targetSession)) {
+      json(res, { error: 'Invalid targetSession: must be a known agent session' }, 400)
       return true
     }
     writeScheduledTask(name, data)
