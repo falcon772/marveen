@@ -1110,14 +1110,29 @@ function populateProfileSelect(selectEl, descEl, selected) {
     for (const p of profiles) {
       const opt = document.createElement('option')
       opt.value = p.id
-      const tag = p.permissionMode === 'strict' ? ' (szigorú)' : ''
-      opt.textContent = `${p.label}${tag}`
-      if (p.id === selected) opt.selected = true
+      const posture = p.permissionMode === 'strict' ? 'szigorú (strict)' : 'engedékeny (permissive)'
+      opt.textContent = `${p.label} — ${posture}`
       selectEl.appendChild(opt)
+    }
+    // Never default to a permissive profile: if the requested selection isn't
+    // in the list (e.g. a fresh wizard), fall back to the first strict one.
+    const hasSelected = profiles.some(p => p.id === selected)
+    const firstStrict = profiles.find(p => p.permissionMode === 'strict')
+    selectEl.value = hasSelected ? selected : (firstStrict ? firstStrict.id : (profiles[0] ? profiles[0].id : ''))
+
+    let cautionEl = descEl.nextElementSibling
+    if (!cautionEl || !cautionEl.classList.contains('profile-caution')) {
+      cautionEl = document.createElement('small')
+      cautionEl.className = 'profile-caution'
+      cautionEl.style.cssText = 'display:block;margin-top:4px;color:var(--warning,#d4a52c);font-size:12px;line-height:1.4'
+      descEl.insertAdjacentElement('afterend', cautionEl)
     }
     const updateDesc = () => {
       const p = profiles.find(x => x.id === selectEl.value)
       descEl.textContent = p ? p.description : ''
+      const isPermissive = p && p.permissionMode === 'permissive'
+      cautionEl.hidden = !isPermissive
+      cautionEl.textContent = isPermissive ? '⚠ Engedékeny profil — kevesebb korlátozás, körültekintéssel válaszd.' : ''
     }
     selectEl.onchange = updateDesc
     updateDesc()
