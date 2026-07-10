@@ -83,11 +83,33 @@ function persistScheduleLastRun(): void {
   }
 }
 
+// Allowlist of tmux sessions a task is permitted to target: the main
+// channels session plus every known agent's derived session name. Used to
+// gate the free-text targetSession field both at fire time (the real
+// security boundary) and at write time (fast feedback).
+function allowedTargetSessions(): Set<string> {
+  return new Set([MAIN_CHANNELS_SESSION, ...listAgentNames().map(agentSessionName)])
+}
+
+export function isAllowedTargetSession(session: string): boolean {
+  return allowedTargetSessions().has(session)
+}
+
 // Try to fire a task at a single target agent. Returns the outcome so the
 // caller can decide whether to queue a retry. Splitting this out means the
 // pendingTaskRetries loop and the normal cron loop share one code path.
 function attemptFireTask(task: ScheduledTask, agentName: string, now: number): 'fired' | 'busy' | 'missing' | 'starting' | 'error' {
   const isMainAgent = agentName === MAIN_AGENT_ID
+
+  // The targetSession override is free text (persisted from an API body, or
+  // hand-edited on disk), so it must be revalidated here even though the
+  // write path also checks it -- old/hand-edited tasks bypass that check
+  // entirely. Never deliver to a session outside the known allowlist.
+  if (task.targetSession && !isAllowedTargetSession(task.targetSession)) {
+    logger.error({ task: task.name, targetSession: task.targetSession }, 'Scheduled task targetSession not in allowlist, dropping delivery')
+    return 'missing'
+  }
+
   // Allow per-task session override via targetSession config field.
   // Falls back to the standard agent session name derivation.
   const session = task.targetSession
