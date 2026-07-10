@@ -1,0 +1,29 @@
+{
+  "id": "analyst-draft",
+  "label": "Elemző / kutató (csak piszkozat)",
+  "description": "Üzleti elemzés, piackutatás, mély kutatás. Webet és adatot olvas (prompt injection felület), ezért szigorúan korlátozott: csak a saját mappájába ír piszkozatot, kifelé nem posztol, a titok-fájlok és a nyers HTTP-küldés tiltva. A DBS/DSA elemző-kutató, a BOS (jogi/pénzügyi, pénzmozgás nélkül), a DAS (adat) és a Compliance osztja ezt a profilt.",
+  "permissionMode": "strict",
+  "filesystem": {
+    "allow": [
+      "Read(${AGENT_DIR}/**)",
+      "Write(${AGENT_DIR}/**)",
+      "Edit(${AGENT_DIR}/**)",
+      "Read(${HOME}/Downloads/**)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)"
+    ],
+    "deny": [
+      "Read(${HOME}/.ssh/**)",
+      "Read(${HOME}/.aws/**)",
+      "Read(${HOME}/.gnupg/**)",
+      "Read(${HOME}/.env)",
+      "Read(**/.env)",
+      "Bash(sudo:*)",
+      "Bash(rm:*)",
+      "Bash(curl -X POST:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}
