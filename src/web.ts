@@ -2,8 +2,9 @@ import http from 'node:http'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { execSync, execFileSync } from 'node:child_process'
-import { PROJECT_ROOT, WEB_HOST, DASHBOARD_PUBLIC_URL } from './config.js'
+import { PROJECT_ROOT, WEB_HOST, DASHBOARD_PUBLIC_URL, MAIN_AGENT_ID } from './config.js'
 import { loadOrCreateDashboardToken, checkBearerToken } from './web/dashboard-auth.js'
+import { issueAgentToken } from './web/agent-tokens.js'
 import { json } from './web/http-helpers.js'
 import { AGENTS_BASE_DIR, listAgentNames } from './web/agent-config.js'
 import { ensureAgentHooks, ensureDefaultScheduledTasks } from './web/agent-scaffold.js'
@@ -61,6 +62,15 @@ export function startWebServer(port = 3420): http.Server {
   ensureDirs()
 
   const DASHBOARD_TOKEN = loadOrCreateDashboardToken()
+
+  // S4.1a: provision every agent's own token (file + hash row), idempotent --
+  // covers both brand-new boots and backfilling agents that predate this
+  // change. Nothing reads these for auth yet (S4.1b); this only ensures a
+  // token exists. Runs after loadOrCreateDashboardToken() so store/ already
+  // exists (the main agent's token lives there, see agent-tokens.ts).
+  for (const name of listAgentNames()) issueAgentToken(name)
+  issueAgentToken(MAIN_AGENT_ID)
+
   const allowedOrigins = new Set([
     `http://localhost:${port}`,
     `http://127.0.0.1:${port}`,
