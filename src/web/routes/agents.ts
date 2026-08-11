@@ -7,6 +7,7 @@ import { MAIN_AGENT_ID, BOT_NAME } from '../../config.js'
 import { createAgentMessage, listPendingChannelRequests, updateChannelRequestStatus } from '../../db.js'
 import { atomicWriteFileSync } from '../atomic-write.js'
 import { getSecret, setSecret, deleteSecret, listSecrets } from '../vault.js'
+import { issueAgentToken } from '../agent-tokens.js'
 import {
   agentDir,
   agentConfigRoot,
@@ -535,6 +536,7 @@ export async function tryHandleAgents(ctx: RouteContext, webDir: string): Promis
     if (existsSync(agentDir(name))) { json(res, { error: 'Agent already exists' }, 409); return true }
 
     scaffoldAgentDir(name)
+    issueAgentToken(name)
     writeAgentModel(name, model)
     writeAgentSecurityProfile(name, profileId)
     writeAgentSettingsFromProfile(name, loadProfileTemplate(profileId))

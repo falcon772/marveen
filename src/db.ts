@@ -342,6 +342,17 @@ export function initDatabase(dbPathOverride?: string): void {
   `)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_messages_status ON agent_messages(status, to_agent)`)
 
+  // --- Agent Tokens (S4.1a: provisioned per-agent secret, hash-only at rest.
+  // NOT YET used for auth anywhere -- enforcement is a separate follow-up
+  // (S4.1b). See src/web/agent-tokens.ts for issuance.) ---
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_tokens (
+      agent_name TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `)
+
   // --- Pending Channel Requests (Slack channel opt-in workflow) ---
   db.exec(`
     CREATE TABLE IF NOT EXISTS pending_channel_requests (
@@ -1177,6 +1188,31 @@ export function markMessageFailed(id: number, error?: string): boolean {
 
 export function listAgentMessages(limit = 50): AgentMessage[] {
   return db.prepare('SELECT * FROM agent_messages ORDER BY created_at DESC LIMIT ?').all(limit) as AgentMessage[]
+}
+
+// --- Agent Tokens (S4.1a) ---
+// Hash-only storage: the server never needs the plaintext back, only to
+// compare a presented token's hash against what's on record. Plaintext
+// issuance/file-write lives in src/web/agent-tokens.ts.
+
+export function setAgentTokenHash(agentName: string, tokenHash: string): void {
+  const now = Math.floor(Date.now() / 1000)
+  db.prepare(
+    'INSERT INTO agent_tokens (agent_name, token_hash, created_at) VALUES (?, ?, ?) ' +
+    'ON CONFLICT(agent_name) DO UPDATE SET token_hash = excluded.token_hash, created_at = excluded.created_at'
+  ).run(agentName, tokenHash, now)
+}
+
+export function getAgentTokenHash(agentName: string): string | null {
+  const row = db.prepare('SELECT token_hash FROM agent_tokens WHERE agent_name = ?').get(agentName) as
+    { token_hash: string } | undefined
+  return row ? row.token_hash : null
+}
+
+export function findAgentByTokenHash(tokenHash: string): string | null {
+  const row = db.prepare('SELECT agent_name FROM agent_tokens WHERE token_hash = ?').get(tokenHash) as
+    { agent_name: string } | undefined
+  return row ? row.agent_name : null
 }
 
 // System/automation participants that are not real conversation peers. They are
