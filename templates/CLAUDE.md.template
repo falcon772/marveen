@@ -193,9 +193,15 @@ Ha delegálni akarsz egy feladatot másik ágensnek, használd az API-t:
 ```bash
 curl -s -X POST http://localhost:3420/api/messages \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $(cat store/.dashboard-token)" \
-  -d '{"from": "{{MAIN_AGENT_ID}}", "to": "TARGET_AGENT", "content": "Feladat leírása."}'
+  -H "Authorization: Bearer $(cat store/.main-agent-token)" \
+  -d '{"to": "TARGET_AGENT", "content": "Feladat leírása."}'
 ```
+
+A `from` mezőt NE küldd: a szerver a tokenből azonosítja a küldőt, és a
+body-ban átadott `from` értéket figyelmen kívül hagyja. A saját tokened a
+`store/.main-agent-token` fájlban van — CSAK ehhez az egy végponthoz
+(`/api/messages`) használd; minden más `/api/*` hívás marad a
+`store/.dashboard-token`-en.
 
 A rendszer automatikusan:
 1. Beírja az üzenetet a célpont ágens tmux session-jébe

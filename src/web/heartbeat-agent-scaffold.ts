@@ -90,6 +90,9 @@ export interface HeartbeatIdentity {
   mainAgentId: string
   // Absolute path to store/ (holds the DB and the dashboard token).
   storeDir: string
+  // Absolute path to this agent's own directory -- holds .agent-token, the
+  // per-agent credential /api/messages authenticates the sender with.
+  agentDir: string
   // Dashboard origin for the inter-agent message POST, e.g.
   // http://localhost:3420.
   dashboardOrigin: string
@@ -106,6 +109,7 @@ export function currentHeartbeatIdentity(): HeartbeatIdentity {
     botName: BOT_NAME,
     mainAgentId: MAIN_AGENT_ID,
     storeDir: STORE_DIR,
+    agentDir: HEARTBEAT_AGENT_DIR,
     dashboardOrigin: `http://localhost:${WEB_PORT}`,
     calendarAccount: HEARTBEAT_CALENDAR_ACCOUNT,
   }
@@ -206,12 +210,16 @@ When you receive the heartbeat prompt:
 3. **Send** that string to the main agent via the dashboard API:
 
    \`\`\`bash
-   TOKEN=$(cat ${id.storeDir}/.dashboard-token)
+   TOKEN=$(cat ${id.agentDir}/.agent-token)
    curl -s -X POST ${id.dashboardOrigin}/api/messages \\
      -H "Content-Type: application/json" \\
      -H "Authorization: Bearer $TOKEN" \\
-     -d '{"from":"heartbeat","to":"${id.mainAgentId}","content":"<the formatted text>"}'
+     -d '{"to":"${id.mainAgentId}","content":"<the formatted text>"}'
    \`\`\`
+
+   This endpoint authenticates you from your OWN token (\`.agent-token\`), which
+   is why there is no \`"from"\` field -- the server fills it in as \`heartbeat\`.
+   Any other dashboard API call still uses \`${id.storeDir}/.dashboard-token\`.
 
 4. **Stop.** Do not Telegram-reply, do not Slack, do not message
    anyone else. The handoff to the main agent is the entire job. The

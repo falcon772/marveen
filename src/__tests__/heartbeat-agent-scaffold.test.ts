@@ -13,6 +13,7 @@ const ID: HeartbeatIdentity = {
   botName: 'Helios',
   mainAgentId: 'helios',
   storeDir: '/srv/app/store',
+  agentDir: '/srv/app/agents/heartbeat',
   dashboardOrigin: 'http://localhost:3420',
   calendarAccount: 'nina@example.com',
 }
@@ -32,14 +33,20 @@ describe('renderHeartbeatClaudeMd', () => {
   it('routes the inter-agent message to the main agent id', () => {
     const out = renderHeartbeatClaudeMd(ID)
     expect(out).toContain('"to":"helios"')
-    // The sender is always the fixed heartbeat agent id.
-    expect(out).toContain('"from":"heartbeat"')
+    // S4.1b: the sender is NO LONGER self-asserted in the body -- the server
+    // derives it from the per-agent token the curl authenticates with.
+    expect(out).not.toContain('"from":"heartbeat"')
   })
 
-  it('uses the supplied store dir (absolute) for the DB and token paths', () => {
+  it('uses the supplied store dir (absolute) for the DB path', () => {
     const out = renderHeartbeatClaudeMd(ID)
     expect(out).toContain('/srv/app/store/claudeclaw.db')
-    expect(out).toContain('cat /srv/app/store/.dashboard-token')
+  })
+
+  it('authenticates /api/messages with its OWN per-agent token, not the dashboard token', () => {
+    const out = renderHeartbeatClaudeMd(ID)
+    expect(out).toContain('cat /srv/app/agents/heartbeat/.agent-token')
+    expect(out).not.toContain('TOKEN=$(cat /srv/app/store/.dashboard-token)')
   })
 
   it('uses the supplied dashboard origin for the messages API', () => {
@@ -106,6 +113,7 @@ describe('renderHeartbeatClaudeMd', () => {
       botName: 'Atlas',
       mainAgentId: 'atlas',
       storeDir: '/data/store',
+      agentDir: '/data/agents/heartbeat',
       dashboardOrigin: 'http://localhost:9000',
       calendarAccount: '',
     })
@@ -113,6 +121,7 @@ describe('renderHeartbeatClaudeMd', () => {
     expect(b).toContain("across Omar's systems")
     expect(b).toContain('"to":"atlas"')
     expect(b).toContain('/data/store/claudeclaw.db')
+    expect(b).toContain('/data/agents/heartbeat/.agent-token')
     expect(b).toContain('http://localhost:9000/api/messages')
   })
 })

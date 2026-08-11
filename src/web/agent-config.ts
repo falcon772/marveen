@@ -387,6 +387,18 @@ export function listAgentNames(): string[] {
   })
 }
 
+// Every agent directory, INCLUDING the dashboard-hidden ones. listAgentNames()
+// is the UI-facing list and filters out HIDDEN_AGENT_SENTINEL dirs; anything
+// that provisions per-agent infrastructure must use this instead, or a hidden
+// agent (today: `heartbeat`) silently never gets it -- which is exactly how the
+// heartbeat ended up with no per-agent token after S4.1a.
+export function listAllAgentDirNames(): string[] {
+  if (!existsSync(AGENTS_BASE_DIR)) return []
+  return readdirSync(AGENTS_BASE_DIR).filter((f) => {
+    try { return statSync(join(AGENTS_BASE_DIR, f)).isDirectory() } catch { return false }
+  })
+}
+
 // Does this identifier refer to a registered agent? MAIN_AGENT_ID always
 // counts (it lives outside agents/ but is a first-class peer). Sub-agents
 // need a directory on disk. One fs stat per call -- the router calls this

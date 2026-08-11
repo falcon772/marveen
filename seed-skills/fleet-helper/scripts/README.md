@@ -10,6 +10,11 @@ No secrets or personal data are baked in: the dashboard token is read from
 auto-detected), and any personal sender/keyword lists live in a gitignored
 `mail_rules.json` (see `mail_rules.example.json`).
 
+`msg` is the one exception: `/api/messages` authenticates the sender from this
+agent's OWN token (`.agent-token` in the cwd, or `store/.main-agent-token` for
+the main agent), read at call time. The server fills `from` from that token, so
+it is no longer passed. Every other command keeps using the dashboard token.
+
 ## fleet.py - dashboard API + kanban + MarkdownV2
 CLI (fewer tokens than a curl block) or import as a module:
 
@@ -17,7 +22,7 @@ CLI (fewer tokens than a curl block) or import as a module:
 python3 fleet.py mdv2 "Tomorrow (8:00) - report!"   # escaped MarkdownV2
 python3 fleet.py mem-save  <agent> "text" warm "k1, k2"
 python3 fleet.py mem-search <agent> "query" warm
-python3 fleet.py msg <from> <to> "message"
+python3 fleet.py msg <to> "message"   # sender comes from your own token
 python3 fleet.py agents
 python3 fleet.py kanban-due | kanban-stuck <sec> | kanban-status <status>
 ```

@@ -4,9 +4,9 @@ import { join } from 'node:path'
 import { execSync, execFileSync } from 'node:child_process'
 import { PROJECT_ROOT, WEB_HOST, DASHBOARD_PUBLIC_URL, MAIN_AGENT_ID } from './config.js'
 import { loadOrCreateDashboardToken, checkBearerToken } from './web/dashboard-auth.js'
-import { issueAgentToken } from './web/agent-tokens.js'
+import { issueAgentToken, resolveAgentFromBearer } from './web/agent-tokens.js'
 import { json } from './web/http-helpers.js'
-import { AGENTS_BASE_DIR, listAgentNames } from './web/agent-config.js'
+import { AGENTS_BASE_DIR, listAgentNames, listAllAgentDirNames } from './web/agent-config.js'
 import { ensureAgentHooks, ensureDefaultScheduledTasks } from './web/agent-scaffold.js'
 import { refreshMarveenBotUsername } from './web/telegram.js'
 import { startMessageRouter } from './web/message-router.js'
@@ -63,12 +63,16 @@ export function startWebServer(port = 3420): http.Server {
 
   const DASHBOARD_TOKEN = loadOrCreateDashboardToken()
 
-  // S4.1a: provision every agent's own token (file + hash row), idempotent --
+  // S4.1a/b: provision every agent's own token (file + hash row), idempotent --
   // covers both brand-new boots and backfilling agents that predate this
-  // change. Nothing reads these for auth yet (S4.1b); this only ensures a
-  // token exists. Runs after loadOrCreateDashboardToken() so store/ already
-  // exists (the main agent's token lives there, see agent-tokens.ts).
-  for (const name of listAgentNames()) issueAgentToken(name)
+  // change. Runs after loadOrCreateDashboardToken() so store/ already exists
+  // (the main agent's token lives there, see agent-tokens.ts).
+  //
+  // listAllAgentDirNames() -- NOT listAgentNames() -- because dashboard-hidden
+  // agents still send inter-agent messages and so still need a token: the
+  // heartbeat agent is hidden, and with the UI-facing list it would never be
+  // issued one and would fall back to the untrusted operator sentinel.
+  for (const name of listAllAgentDirNames()) issueAgentToken(name)
   issueAgentToken(MAIN_AGENT_ID)
 
   const allowedOrigins = new Set([
@@ -122,10 +126,20 @@ export function startWebServer(port = 3420): http.Server {
     // path, validated with the same constant-time check. Everything else stays
     // header-only.
     const isSseStream = method === 'GET' && /^\/api\/agents\/[^/]+\/pane\/stream$/.test(path)
+    // S4.1b: POST /api/messages is the ONE route that also accepts a per-agent
+    // token, because it is the inter-agent send path and the sender's identity
+    // must be proven rather than self-asserted. Resolved here (the single auth
+    // choke-point) and handed to the route via ctx.authenticatedAgent, so the
+    // handler never re-parses the header or trusts a body `from`. Every other
+    // /api/* route keeps requiring DASHBOARD_TOKEN, unchanged.
+    const isInterAgentPost = path === '/api/messages' && method === 'POST'
+    const authenticatedAgent = isInterAgentPost
+      ? resolveAgentFromBearer(req.headers.authorization)
+      : null
     if (path.startsWith('/api/') && !isPublicApi) {
       const headerOk = checkBearerToken(req.headers.authorization, DASHBOARD_TOKEN)
       const queryOk = isSseStream && checkBearerToken(`Bearer ${url.searchParams.get('token') ?? ''}`, DASHBOARD_TOKEN)
-      if (!headerOk && !queryOk) {
+      if (!headerOk && !queryOk && authenticatedAgent === null) {
         res.writeHead(401, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: 'Unauthorized' }))
         return
@@ -133,7 +147,7 @@ export function startWebServer(port = 3420): http.Server {
     }
 
     try {
-      const routeCtx: RouteContext = { req, res, path, method, url }
+      const routeCtx: RouteContext = { req, res, path, method, url, authenticatedAgent }
 
       if (await tryHandleProfiles(routeCtx)) return
       if (await tryHandleMessages(routeCtx)) return

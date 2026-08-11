@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { MAIN_AGENT_ID, STORE_DIR } from '../config.js'
 import { atomicWriteFileSync } from './atomic-write.js'
 import { agentDir } from './agent-config.js'
-import { getAgentTokenHash, setAgentTokenHash } from '../db.js'
+import { findAgentByTokenHash, getAgentTokenHash, setAgentTokenHash } from '../db.js'
 import { logger } from '../logger.js'
 
 // S4.1a: per-agent bearer token, provisioned here but NOT YET read by any
@@ -38,4 +38,21 @@ export function issueAgentToken(name: string): void {
   const hash = createHash('sha256').update(token).digest('hex')
   setAgentTokenHash(name, hash)
   logger.info({ name }, 'Agent token issued')
+}
+
+// S4.1b: resolve an `Authorization: Bearer <token>` header to the agent that
+// owns the token, or null when the header is absent/malformed or the token is
+// not a per-agent token (e.g. it is the human DASHBOARD_TOKEN).
+//
+// The lookup is by sha256 of the presented value against the stored hash, so
+// no plaintext token is ever held server-side. Unlike checkBearerToken -- which
+// compares against ONE known secret and so must be constant-time -- this is an
+// indexed equality lookup over a 64-hex-char digest of a 32-byte random token:
+// there is no low-entropy candidate set for a timing oracle to walk.
+export function resolveAgentFromBearer(header: string | undefined): string | null {
+  if (!header) return null
+  const m = /^Bearer\s+(.+)$/.exec(header)
+  if (!m) return null
+  const hash = createHash('sha256').update(m[1].trim()).digest('hex')
+  return findAgentByTokenHash(hash)
 }
