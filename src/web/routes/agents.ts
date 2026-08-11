@@ -8,6 +8,7 @@ import { createAgentMessage, listPendingChannelRequests, updateChannelRequestSta
 import { atomicWriteFileSync } from '../atomic-write.js'
 import { getSecret, setSecret, deleteSecret, listSecrets } from '../vault.js'
 import { issueAgentToken } from '../agent-tokens.js'
+import { isReservedAgentId } from '../reserved-agent-ids.js'
 import {
   agentDir,
   agentConfigRoot,
@@ -531,6 +532,16 @@ export async function tryHandleAgents(ctx: RouteContext, webDir: string): Promis
     }
 
     if (!name) { json(res, { error: 'Name is required' }, 400); return true }
+    // Reserved server-side identities can never become real agents -- most
+    // importantly the dashboard sentinel, whose untrustworthiness depends on
+    // isKnownAgent() staying false for it. Checked explicitly rather than
+    // relying on the agentDir-exists 409 below, which only catches the ones
+    // that happen to have a directory on this host.
+    if (isReservedAgentId(name)) {
+      logger.warn({ name }, 'Rejected agent creation: name collides with a reserved system identity')
+      json(res, { error: 'This name is reserved for a system identity' }, 400)
+      return true
+    }
     if (!description) { json(res, { error: 'Description is required' }, 400); return true }
     if (!isAllowedModel(requestedModel)) { json(res, { error: 'Unsupported model' }, 400); return true }
     if (existsSync(agentDir(name))) { json(res, { error: 'Agent already exists' }, 409); return true }

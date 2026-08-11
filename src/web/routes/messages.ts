@@ -10,14 +10,25 @@ import { sanitizeAgentIdent } from '../../prompt-safety.js'
 import { readBody, json } from '../http-helpers.js'
 import type { RouteContext } from './types.js'
 
+// S4.1b: the `from` a message is inserted with when the request authenticated
+// with the human DASHBOARD_TOKEN rather than a per-agent token -- the dashboard
+// compose UI and the heartbeat delivery script. A fixed server-side constant,
+// never the body's `from`, so an operator-origin message cannot claim an agent
+// identity. It is deliberately NOT a registered agent id, so isTrustedPeer's
+// isKnownAgent check fails and the router always frames these as <untrusted>
+// (which is exactly how they are already framed today).
+export const DASHBOARD_SENDER_ID = 'dashboard-operator'
+
 export async function tryHandleMessages(ctx: RouteContext): Promise<boolean> {
   const { req, res, path, method, url } = ctx
 
   if (path === '/api/messages' && method === 'POST') {
     const body = await readBody(req)
     const { from, to, content } = JSON.parse(body.toString()) as { from: string; to: string; content: string }
-    if (!from?.trim() || !to?.trim() || !content?.trim()) {
-      json(res, { error: 'from, to, and content are required' }, 400)
+    // `from` is NO LONGER accepted from the client -- it is set server-side
+    // from the authenticated identity below, so it is not a required field.
+    if (!to?.trim() || !content?.trim()) {
+      json(res, { error: 'to and content are required' }, 400)
       return true
     }
     // Security: the channel-coordinator id grants channel-inbound delivery
@@ -40,7 +51,23 @@ export async function tryHandleMessages(ctx: RouteContext): Promise<boolean> {
       json(res, { error: 'from is reserved for the in-process channel coordinator' }, 403)
       return true
     }
-    const msg = createAgentMessage(from.trim(), to.trim(), content.trim())
+    // The sender is the identity proven by the per-agent token in the gate --
+    // NEVER the body's `from`. Without a per-agent token the request got here
+    // on the human dashboard token, so it is attributed to the fixed operator
+    // sentinel. Either way the client cannot choose who it claims to be, which
+    // is what closes the forged-`from` -> <trusted-peer> escalation.
+    const senderId = ctx.authenticatedAgent ?? DASHBOARD_SENDER_ID
+    // Warn ONLY on the authenticated path: an agent that proved one identity
+    // while claiming another is a forging signal worth surfacing. The dashboard
+    // UI still sends a (now ignored) `from` on every operator message, so
+    // warning there would be pure noise, not a security event.
+    if (ctx.authenticatedAgent && from?.trim() && from.trim() !== senderId) {
+      logger.warn(
+        { claimed: from.trim(), actual: senderId, to: to.trim() },
+        'Ignoring client-asserted from on /api/messages (server uses the authenticated identity)',
+      )
+    }
+    const msg = createAgentMessage(senderId, to.trim(), content.trim())
     logger.info({ id: msg.id, from: msg.from_agent, to: msg.to_agent }, 'Agent message created')
     json(res, msg)
     return true

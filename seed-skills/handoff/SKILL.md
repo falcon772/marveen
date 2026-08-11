@@ -107,9 +107,14 @@ Keep each step concrete enough to execute without asking questions.}
 ```bash
 curl -s -X POST http://localhost:3420/api/messages \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $(cat store/.dashboard-token)" \
-  -d "{\"from\":\"$AGENT_ID\",\"to\":\"TARGET\",\"content\":\"[HANDOFF] purpose: ... \n\n$(cat HANDOFF.md)\"}"
+  -H "Authorization: Bearer $(cat .agent-token)" \
+  -d "{\"to\":\"TARGET\",\"content\":\"[HANDOFF] purpose: ... \n\n$(cat HANDOFF.md)\"}"
 ```
+
+Note: `/api/messages` authenticates with your OWN token — `.agent-token` in your
+working directory (the main agent uses `store/.main-agent-token`). Do not send a
+`from` field: the server derives the sender from the token and ignores any `from`
+in the body. Every other API call above stays on `store/.dashboard-token`.
 
 ### 4. Confirm
 

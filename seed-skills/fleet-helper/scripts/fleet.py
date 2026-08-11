@@ -47,14 +47,44 @@ def token():
         return f.read().strip()
 
 
+def agent_token():
+    """This agent's OWN token, used ONLY for POST /api/messages.
+
+    The server authenticates the sender of an inter-agent message from this
+    token and fills `from` itself, so the sender can no longer be self-asserted.
+    Every other endpoint still takes the shared dashboard token (they do not
+    accept a per-agent token and would 401).
+
+    Resolution mirrors where each agent actually runs: a sub-agent's cwd is
+    agents/<name>/, so its token is `.agent-token` right there; the main agent
+    runs in the project root, so its token is store/.main-agent-token. Returns
+    None when neither exists -- the caller then falls back to the dashboard
+    token and the message is delivered as untrusted rather than failing.
+    """
+    local = os.path.join(os.getcwd(), ".agent-token")
+    if os.path.isfile(local):
+        with open(local) as f:
+            return f.read().strip()
+    try:
+        main = os.path.join(project_dir(), "store", ".main-agent-token")
+    except RuntimeError:
+        return None
+    if os.path.isfile(main):
+        with open(main) as f:
+            return f.read().strip()
+    return None
+
+
 def db_path():
     return os.path.join(project_dir(), "store", "claudeclaw.db")
 
 
-def api(method, path, payload=None, timeout=20):
+def api(method, path, payload=None, timeout=20, auth_token=None):
+    # auth_token overrides the shared dashboard token. Only send_message uses
+    # it (per-agent token for /api/messages); every other call leaves it None.
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(base_url() + path, data=data, method=method)
-    req.add_header("Authorization", "Bearer " + token())
+    req.add_header("Authorization", "Bearer " + (auth_token or token()))
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
@@ -85,8 +115,11 @@ def daily_log(agent, content):
     return api("POST", "/api/daily-log", {"agent_id": agent, "content": content})
 
 
-def send_message(from_agent, to_agent, content):
-    return api("POST", "/api/messages", {"from": from_agent, "to": to_agent, "content": content})
+def send_message(to_agent, content):
+    # No `from`: the server derives the sender from agent_token() and ignores
+    # any client-supplied from. Signature dropped its leading from_agent arg.
+    return api("POST", "/api/messages", {"to": to_agent, "content": content},
+               auth_token=agent_token())
 
 
 def list_agents():
@@ -150,7 +183,7 @@ def main(argv):
     elif cmd == "daily-log":
         _out(daily_log(rest[0], rest[1]))
     elif cmd == "msg":
-        _out(send_message(rest[0], rest[1], rest[2]))
+        _out(send_message(rest[0], rest[1]))
     elif cmd == "agents":
         _out([{"name": a.get("name"), "running": a.get("running"),
                "model": a.get("model")} for a in list_agents()])
