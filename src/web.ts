@@ -5,6 +5,7 @@ import { execSync, execFileSync } from 'node:child_process'
 import { PROJECT_ROOT, WEB_HOST, DASHBOARD_PUBLIC_URL, MAIN_AGENT_ID } from './config.js'
 import { loadOrCreateDashboardToken, checkBearerToken } from './web/dashboard-auth.js'
 import { issueAgentToken, resolveAgentFromBearer } from './web/agent-tokens.js'
+import { consumePaneTicket } from './web/pane-tickets.js'
 import { json } from './web/http-helpers.js'
 import { AGENTS_BASE_DIR, listAgentNames, listAllAgentDirNames } from './web/agent-config.js'
 import { ensureAgentHooks, ensureDefaultScheduledTasks } from './web/agent-scaffold.js'
@@ -122,10 +123,14 @@ export function startWebServer(port = 3420): http.Server {
       return json(res, { authenticated: ok })
     }
     // The live pane SSE stream is consumed via EventSource, which cannot set an
-    // Authorization header -- accept the token via ?token= for this one GET
-    // path, validated with the same constant-time check. Everything else stays
+    // Authorization header -- accept a short-lived, single-use, agent-bound
+    // ticket via ?ticket= for this one GET path (S4.1c). The ticket is minted
+    // by POST /api/agents/<name>/pane/ticket, which itself requires the
+    // header DASHBOARD_TOKEN -- so the root token is never in a URL, only this
+    // ticket is, and it is burned on first use. Everything else stays
     // header-only.
-    const isSseStream = method === 'GET' && /^\/api\/agents\/[^/]+\/pane\/stream$/.test(path)
+    const sseStreamMatch = method === 'GET' ? path.match(/^\/api\/agents\/([^/]+)\/pane\/stream$/) : null
+    const isSseStream = sseStreamMatch !== null
     // S4.1b: POST /api/messages is the ONE route that also accepts a per-agent
     // token, because it is the inter-agent send path and the sender's identity
     // must be proven rather than self-asserted. Resolved here (the single auth
@@ -138,7 +143,7 @@ export function startWebServer(port = 3420): http.Server {
       : null
     if (path.startsWith('/api/') && !isPublicApi) {
       const headerOk = checkBearerToken(req.headers.authorization, DASHBOARD_TOKEN)
-      const queryOk = isSseStream && checkBearerToken(`Bearer ${url.searchParams.get('token') ?? ''}`, DASHBOARD_TOKEN)
+      const queryOk = isSseStream && consumePaneTicket(decodeURIComponent(sseStreamMatch![1]), url.searchParams.get('ticket') ?? '')
       if (!headerOk && !queryOk && authenticatedAgent === null) {
         res.writeHead(401, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: 'Unauthorized' }))
@@ -243,11 +248,17 @@ export function startWebServer(port = 3420): http.Server {
     logger.info({ port }, `Web dashboard: http://localhost:${port}`)
     // Do NOT log the bearer token: launchd/journal/pipe captures of the
     // structured log would otherwise carry a root-equivalent credential.
-    // Print the bootstrap URL directly to stderr instead so it shows in the
-    // interactive terminal but does not land in the pino log stream.
-    const bootstrapUrl = `http://127.0.0.1:${port}/?token=${DASHBOARD_TOKEN}`
+    // Print it directly to stderr instead so it shows in the interactive
+    // terminal but does not land in the pino log stream.
+    //
+    // S4.1c: the token is no longer appended to the URL as ?token=<...> -- a
+    // URL survives in browser history and referrer headers even after the
+    // client's own strip runs, and would additionally land in any future
+    // reverse-proxy access log. Printed on its own line instead, for the
+    // operator to paste into the dashboard's login field.
     process.stderr.write(
-      `\nDashboard access URL (paste into browser, token is stored afterward):\n  ${bootstrapUrl}\n\n`
+      `\nDashboard: http://127.0.0.1:${port}/\n` +
+      `Access token (paste into the dashboard login field):\n  ${DASHBOARD_TOKEN}\n\n`
     )
   })
 

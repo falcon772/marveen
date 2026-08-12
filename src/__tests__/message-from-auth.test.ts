@@ -139,8 +139,11 @@ describe('gate scoping + untouched invariants', () => {
     expect(WEB_TS_SRC).toMatch(/if \(!headerOk && !queryOk && authenticatedAgent === null\)/)
   })
 
-  it('the SSE ?token= path is untouched (S4.1c, out of scope here)', () => {
-    expect(WEB_TS_SRC).toMatch(/queryOk = isSseStream && checkBearerToken\(`Bearer \$\{url\.searchParams\.get\('token'\) \?\? ''\}`, DASHBOARD_TOKEN\)/)
+  it('S4.1c: the SSE route no longer accepts the root token via ?token=', () => {
+    // The old root-token-in-query path is gone...
+    expect(WEB_TS_SRC).not.toMatch(/checkBearerToken\(`Bearer \$\{url\.searchParams\.get\('token'\)/)
+    // ...replaced by a single-use, agent-bound ticket burned on first use.
+    expect(WEB_TS_SRC).toMatch(/queryOk = isSseStream && consumePaneTicket\(decodeURIComponent\(sseStreamMatch!\[1\]\), url\.searchParams\.get\('ticket'\) \?\? ''\)/)
   })
 
   it('the coordinator-403 guard is byte-intact and still runs before any insert', () => {

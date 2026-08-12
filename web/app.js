@@ -1,8 +1,14 @@
 // === Dashboard auth bootstrap ===
-// The server prints an URL like http://127.0.0.1:3420/?token=XXX on startup.
-// On first visit we pluck the token out of the URL, store it in localStorage,
-// strip it from the visible URL, and then inject it into every /api/* fetch
-// as a Bearer header so the server lets us through.
+// S4.1c: the server prints the token on its own line (not a ?token=... URL --
+// a URL persists in browser history / referrer headers / terminal scrollback
+// even after a client-side strip). The primary way to log in is now the
+// in-app prompt below: shown when no token is stored yet, or when a request
+// comes back 401. Either way the token is stored in localStorage and then
+// injected into every /api/* fetch as a Bearer header.
+//
+// The old ?token=... URL capture-and-strip is kept as a defensive fallback in
+// case such a URL is ever pasted anyway -- it is no longer the advertised
+// path and should not be expanded.
 
 // The main (channels) agent's real id. The backend /api/marveen route returns
 // the configured MAIN_AGENT_ID (NOT the literal "marveen") in window._marveen;
@@ -22,6 +28,52 @@ function mainAgentId() {
     urlParams.delete('token')
     const clean = window.location.pathname + (urlParams.toString() ? '?' + urlParams : '') + window.location.hash
     window.history.replaceState({}, '', clean)
+  }
+
+  // In-app login prompt (S4.1c). Reuses the existing generic .modal-overlay/
+  // .modal/.form-group styling (no CSS/HTML template changes needed) so this
+  // stays self-contained in app.js. Idempotent: a second call while the
+  // overlay is already open just re-shows it instead of stacking another one.
+  function showTokenPrompt(message) {
+    let overlay = document.getElementById('authTokenOverlay')
+    if (overlay) { overlay.classList.add('active'); return }
+    overlay = document.createElement('div')
+    overlay.id = 'authTokenOverlay'
+    overlay.className = 'modal-overlay active'
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:420px">
+        <div class="modal-header"><h2>Dashboard belépés</h2></div>
+        <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+          <p style="margin:0;color:var(--text-muted)"></p>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Access token</label>
+            <input type="password" id="authTokenInput" class="input" autocomplete="off" placeholder="A szerver terminálján íródott ki induláskor">
+          </div>
+        </div>
+        <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn-primary btn-compact" id="authTokenSubmit">Belépés</button>
+        </div>
+      </div>
+    `
+    overlay.querySelector('.modal-body p').textContent = message
+    document.body.appendChild(overlay)
+    const input = overlay.querySelector('#authTokenInput')
+    const submit = () => {
+      const v = input.value.trim()
+      if (!v) return
+      localStorage.setItem(TOKEN_KEY, v)
+      // A full reload re-runs every already-in-flight page load with the
+      // token now present, instead of us having to replay whichever fetches
+      // failed before login.
+      window.location.reload()
+    }
+    overlay.querySelector('#authTokenSubmit').addEventListener('click', submit)
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit() })
+    setTimeout(() => input.focus(), 50)
+  }
+
+  if (!localStorage.getItem(TOKEN_KEY)) {
+    showTokenPrompt('Add meg a dashboard access tokent (a szerver terminálján íródott ki induláskor).')
   }
 
   const originalFetch = window.fetch.bind(window)
@@ -47,10 +99,7 @@ function mainAgentId() {
       localStorage.removeItem(TOKEN_KEY)
       if (!window.__marveenAuthPrompted) {
         window.__marveenAuthPrompted = true
-        alert(
-          'Dashboard authentication failed. Check the server log for the access URL ' +
-          '(look for "Dashboard access URL" with ?token=...), then reopen it in your browser.'
-        )
+        showTokenPrompt('A mentett token érvénytelen vagy lejárt. Add meg újra.')
       }
     }
     return res
@@ -9611,19 +9660,70 @@ function openTerminalModal(agentName) {
     paintedPane = latestPane
     term.write('\x1b[3J\x1b[2J\x1b[H' + latestPane)
   }
-  const token = localStorage.getItem('marveen-dashboard-token') || ''
-  const sse = new EventSource(`/api/agents/${encodeURIComponent(agentName)}/pane/stream?token=${encodeURIComponent(token)}`)
-  sse.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data)
-      if (msg.pane !== undefined) {
-        latestPane = msg.pane.replace(/\x1b]8;[^\x1b]*\x1b\\/g, '')
-        repaint()
-      }
-    } catch {}
+  // S4.1c: EventSource can't set an Authorization header, so the root
+  // dashboard token never goes in this URL. Instead we mint a single-use
+  // ticket over an authenticated (Bearer-header) fetch and open the stream
+  // with only that. Native EventSource auto-reconnect would keep retrying
+  // the same, now-burned ticket forever, so onerror closes the dead
+  // connection and reconnects with a freshly minted ticket after a short
+  // delay instead. `active` + the single `reconnectTimer` guard mean closing
+  // the modal (terminalSSE.close(), below) stops any further reconnect —
+  // and a flapping connection can never have two reconnects in flight.
+  let active = true
+  let currentSse = null
+  let reconnectTimer = null
+  const RECONNECT_DELAY_MS = 1000
+
+  function scheduleReconnect() {
+    if (!active || reconnectTimer !== null) return
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      connectPaneStream()
+    }, RECONNECT_DELAY_MS)
   }
-  sse.onerror = () => term.write('\r\n[stream hiba vagy leállva]\r\n')
-  terminalSSE = sse
+
+  async function connectPaneStream() {
+    if (!active) return
+    let ticket
+    try {
+      const resp = await fetch(`/api/agents/${encodeURIComponent(agentName)}/pane/ticket`, { method: 'POST' })
+      if (!resp.ok) throw new Error('ticket mint failed')
+      ticket = (await resp.json()).ticket
+    } catch {
+      if (!active) return
+      term.write('\r\n[stream hiba vagy leállva]\r\n')
+      scheduleReconnect()
+      return
+    }
+    if (!active) return // modal was closed while the mint request was in flight
+    const sse = new EventSource(`/api/agents/${encodeURIComponent(agentName)}/pane/stream?ticket=${encodeURIComponent(ticket)}`)
+    currentSse = sse
+    sse.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data)
+        if (msg.pane !== undefined) {
+          latestPane = msg.pane.replace(/\x1b]8;[^\x1b]*\x1b\\/g, '')
+          repaint()
+        }
+      } catch {}
+    }
+    sse.onerror = () => {
+      sse.close()
+      if (currentSse === sse) currentSse = null
+      if (!active) return
+      term.write('\r\n[stream hiba vagy leállva]\r\n')
+      scheduleReconnect()
+    }
+  }
+
+  connectPaneStream()
+  terminalSSE = {
+    close() {
+      active = false
+      if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null }
+      if (currentSse) { currentSse.close(); currentSse = null }
+    },
+  }
   // When the user scrolls back down to the bottom, resume live repainting.
   term.onScroll(() => { if (isAtBottom()) repaint() })
 
