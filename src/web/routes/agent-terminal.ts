@@ -7,14 +7,17 @@ import { agentDir } from '../agent-config.js'
 import { agentSessionName, isAgentRunning } from '../agent-process.js'
 import { isMainChannelsAgent, MAIN_CHANNELS_SESSION } from '../main-agent.js'
 import { literalKeyArgs, specialKeyArgs, loginSequence, type LoginStep } from '../tmux-keys.js'
+import { mintPaneTicket } from '../pane-tickets.js'
 import type { RouteContext } from './types.js'
 
 const TMUX = resolveFromPath('tmux')
 
 // Per-agent dashboard terminal: live pane stream (SSE), keystroke injection,
-// and the scripted /login flow. All gated by the dashboard token (the SSE
-// endpoint accepts the token via ?token= because EventSource cannot set
-// headers -- see the auth gate in web.ts). Szabi 2026-06-03.
+// and the scripted /login flow. All gated by the dashboard token, except the
+// SSE stream itself: EventSource cannot set headers, so it authenticates via
+// a short-lived single-use ticket (?ticket=) minted below instead of the root
+// token -- see pane-tickets.ts and the auth gate in web.ts. Szabi 2026-06-03,
+// S4.1c 2026-08-12.
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -64,6 +67,20 @@ async function runLoginSteps(session: string, steps: LoginStep[]): Promise<void>
 
 export async function tryHandleAgentTerminal(ctx: RouteContext): Promise<boolean> {
   const { res, path, method, url } = ctx
+
+  // --- mint a single-use SSE ticket -------------------------------------
+  // Reached only with a valid header DASHBOARD_TOKEN (the normal /api/* gate
+  // in web.ts) -- so the root token is proven here, in a header, and never in
+  // this endpoint's own URL. The returned ticket is what the client puts in
+  // the EventSource URL below instead.
+  const ticketMatch = path.match(/^\/api\/agents\/([^/]+)\/pane\/ticket$/)
+  if (ticketMatch && method === 'POST') {
+    const name = decodeURIComponent(ticketMatch[1])
+    const target = resolveTarget(name)
+    if (!target.exists) { json(res, { error: 'Agent not found' }, 404); return true }
+    json(res, { ticket: mintPaneTicket(name) })
+    return true
+  }
 
   // --- live pane stream (SSE) ------------------------------------------
   const streamMatch = path.match(/^\/api\/agents\/([^/]+)\/pane\/stream$/)
