@@ -3,6 +3,7 @@
   "label": "Fejlesztő (elszigetelt)",
   "description": "Kód-fejlesztés a saját, elszigetelt munkamappában. A main/master-re tiltott a push, sudo tiltva, SSH/AWS/GnuPG kulcsok elrejtve. Csak a saját mappájába ír. A TSD (fejlesztő) és a SAE (automatizáló) osztja ezt a profilt; az éles kifelé-hatás (telepítés/indítás) kapuzott, nem az ügynök végzi élőben.",
   "permissionMode": "strict",
+  "_securityNote": "This profile grants broad shell (cat/python3/node/git), so the Read() denies below are defense-in-depth only -- a Bash-tool read (`cat`, `python3 -c open(...)`) is matched by command prefix, not by the file it touches, so it is NOT stopped by a Read() deny (S4.1c recon, fix/dev-profile-deny). Real secret/token isolation between agents requires OS-level (Hard) isolation, deferred pre-scale per Solvian utemterv Sec.6.1.",
   "filesystem": {
     "allow": [
       "Read(${AGENT_DIR}/**)",
@@ -25,12 +26,19 @@
       "Read(${HOME}/.ssh/**)",
       "Read(${HOME}/.aws/**)",
       "Read(${HOME}/.gnupg/**)",
+      "Read(${HOME}/.env)",
+      "Read(**/.env)",
+      "Read(**/store/.dashboard-token)",
+      "Read(**/store/.main-agent-token)",
       "Bash(sudo:*)",
       "Bash(rm -rf ${HOME}:*)",
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
       "Bash(git push origin main:*)",
-      "Bash(git push origin master:*)"
+      "Bash(git push origin master:*)",
+      "Bash(curl -X POST:*)",
+      "Bash(curl -XPOST:*)",
+      "Bash(curl --request POST:*)"
     ]
   }
 }

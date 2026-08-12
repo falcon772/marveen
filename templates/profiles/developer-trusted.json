@@ -3,17 +3,25 @@
   "label": "Fejlesztő (bizalmi)",
   "description": "Bizalmi profil: megengedő módban fut, minden parancs engedélyezve a deny-listát kivéve (sudo, SSH/AWS/GnuPG kulcs olvasása, force-push, rm -rf). CSAK olyan ügynöknek add, amit ugyanannyira megbízol, mint magadat — üzleti ügynök SOHA nem kapja. Nincs konkrét Solvian-szerep rendelve hozzá; a névsor teljessége miatt tartjuk fenn.",
   "permissionMode": "permissive",
+  "_securityNote": "Permissive mode means everything not explicitly denied below is allowed, so this profile's safety rests entirely on the deny-list being exhaustive -- a blocklist, inherently more fragile than a strict allow-list. It also grants broad shell (cat/python3/node/git), so the Read() denies are defense-in-depth only: a Bash-tool read is matched by command prefix, not by the file it touches, and is NOT stopped by a Read() deny (S4.1c recon, fix/dev-profile-deny). Real secret/token isolation between agents requires OS-level (Hard) isolation, deferred pre-scale per Solvian utemterv Sec.6.1. A permissive-to-strict-allowlist rework of this profile can be revisited at role-finalization (Solvian C1, post-live).",
   "filesystem": {
     "allow": [],
     "deny": [
       "Read(${HOME}/.ssh/**)",
       "Read(${HOME}/.aws/**)",
       "Read(${HOME}/.gnupg/**)",
+      "Read(${HOME}/.env)",
+      "Read(**/.env)",
+      "Read(**/store/.dashboard-token)",
+      "Read(**/store/.main-agent-token)",
       "Bash(sudo:*)",
       "Bash(rm -rf ${HOME}:*)",
       "Bash(rm -rf /:*)",
       "Bash(git push --force:*)",
-      "Bash(git push -f:*)"
+      "Bash(git push -f:*)",
+      "Bash(curl -X POST:*)",
+      "Bash(curl -XPOST:*)",
+      "Bash(curl --request POST:*)"
     ]
   }
 }
