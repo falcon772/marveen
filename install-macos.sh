@@ -350,7 +350,8 @@ INSTALL_STEP="npm-install"
 echo ""
 echo -e "${BOLD}[5/7] Függőségek telepítése...${NC}"
 cd "$INSTALL_DIR"
-if ! npm install --loglevel warn; then
+# --ignore-scripts: block dependency lifecycle scripts (supply-chain) at install time; our own build runs separately
+if ! npm install --ignore-scripts --loglevel warn; then
   fail "npm install sikertelen. Ellenorizd a hibauzeneteket fentebb."
 fi
 ok "npm csomagok telepítve"

@@ -582,7 +582,8 @@ echo -e "${BOLD}[5/7] Fuggosegek telepitese...${NC}"
 cd "$INSTALL_DIR"
 
 echo -e "  npm install..."
-if ! (npm ci --loglevel warn 2>/dev/null || npm install --loglevel warn); then
+# --ignore-scripts: block dependency lifecycle scripts (supply-chain) at install time; our own build runs separately
+if ! (npm ci --ignore-scripts --loglevel warn 2>/dev/null || npm install --ignore-scripts --loglevel warn); then
   fail "npm install sikertelen. Ellenorizd a hibauzeneteket fentebb."
 fi
 ok "npm csomagok telepitve"
