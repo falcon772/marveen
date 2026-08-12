@@ -170,7 +170,8 @@ fi
 # patched-over malicious dep.
 if git diff "$OLD_VERSION" "$NEW_VERSION" --name-only | grep -qE "^package(-lock)?\.json$"; then
   echo -e "  Fuggosegek frissitese (lock-strict)..."
-  if ! npm ci --silent; then
+  # --ignore-scripts: block dependency lifecycle scripts (supply-chain) at install time; our own build runs separately
+  if ! npm ci --ignore-scripts --silent; then
     echo -e "  HIBA: npm ci sikertelen. Valoszinuleg a package-lock.json nincs szinkronban."
     echo -e "  Reszletekert futtasd: npm ci"
     exit 1
