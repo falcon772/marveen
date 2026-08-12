@@ -11,8 +11,7 @@
       "Read(${HOME}/Downloads/**)",
       "WebFetch(*)",
       "WebSearch(*)",
-      "Bash(ls:*)",
-      "Bash(cat:*)"
+      "Bash(ls:*)"
     ],
     "deny": [
       "Read(${HOME}/.ssh/**)",
@@ -20,6 +19,8 @@
       "Read(${HOME}/.gnupg/**)",
       "Read(${HOME}/.env)",
       "Read(**/.env)",
+      "Read(**/store/.dashboard-token)",
+      "Read(**/store/.main-agent-token)",
       "Bash(sudo:*)",
       "Bash(rm:*)",
       "Bash(curl -X POST:*)",
