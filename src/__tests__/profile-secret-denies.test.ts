@@ -42,6 +42,18 @@ function deniesStoreTokens(p: ProfileTemplate): boolean {
   )
 }
 
+// S4.4 (B6-SEC-4): on Linux, store/.vault-key is a plaintext file sitting
+// next to the encrypted store/vault.json it protects -- one Read away from
+// unlocking every vaulted secret. Same Read-tool-only, shell-bypassable
+// residual as deniesStoreTokens above (see docs/vault.md's Linux posture
+// section and the developer profiles' _securityNote fields).
+function deniesVaultKey(p: ProfileTemplate): boolean {
+  return (
+    p.filesystem.deny.includes('Read(**/store/.vault-key)') &&
+    p.filesystem.deny.includes('Read(**/store/vault.json)')
+  )
+}
+
 // Deny-always-wins (confirmed in Step 0 recon) means a blanket
 // `Read(**/.agent-token)` deny would also block an agent's own
 // `${AGENT_DIR}/.agent-token`, breaking delegation. Per Ákos's decision, no
@@ -82,6 +94,10 @@ describe('every profile: secret Read-denies', () => {
 
     it(`${id} denies the store tokens (.dashboard-token, .main-agent-token)`, () => {
       expect(deniesStoreTokens(byId(id))).toBe(true)
+    })
+
+    it(`${id} denies the vault master key and store (.vault-key, vault.json)`, () => {
+      expect(deniesVaultKey(byId(id))).toBe(true)
     })
 
     it(`${id} never denies .agent-token (own token stays reachable; sibling-token isolation is a documented residual, not enforced here)`, () => {
