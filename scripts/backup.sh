@@ -20,11 +20,13 @@
 #     .claude/channels/*/access.json, invites.json, approved/**  (pairing state)
 #     Library/LaunchAgents/com.<MAIN_AGENT_ID>.*.plist (launchd jobs)
 #
-# Output: backups/claudeclaw-YYYYmmdd-HHMMSS.tar.gz
+# Output: backups/claudeclaw-YYYYmmdd-HHMMSS.tar.gz.age (age-encrypted; see
+#   BACKUP_AGE_RECIPIENT below -- no recipient/no `age` binary => fails closed,
+#   no plaintext archive is ever written).
 # Retention: keeps the most recent 14 archives, prunes the rest.
 #
 # Restore (preserve modes so the 0600 token files stay private):
-#   tar -xpzf <archive> -C /tmp/restore        # inspect first
+#   age -d -i <age-private-key-file> claudeclaw-<stamp>.tar.gz.age | tar -xpzf - -C /tmp/restore
 #   then copy repo/* into the project root and home/* into $HOME.
 # Full runbook: docs/MIGRATION.md.
 
@@ -33,10 +35,26 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKUP_DIR="${REPO_ROOT}/backups"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-ARCHIVE="${BACKUP_DIR}/claudeclaw-${STAMP}.tar.gz"
+ARCHIVE="${BACKUP_DIR}/claudeclaw-${STAMP}.tar.gz.age"
 KEEP=14
 
+# S4.3: age public recipient for at-rest backup encryption. Env var wins;
+# otherwise read from .env (public value -- safe there). No recipient => fail closed.
+BACKUP_AGE_RECIPIENT="${BACKUP_AGE_RECIPIENT:-}"
+if [[ -z "${BACKUP_AGE_RECIPIENT}" && -f "${REPO_ROOT}/.env" ]]; then
+  _rec="$(grep -E '^[[:space:]]*BACKUP_AGE_RECIPIENT[[:space:]]*=' "${REPO_ROOT}/.env" | tail -1 \
+    | sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*$//; s/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/' || true)"
+  [[ -n "${_rec}" ]] && BACKUP_AGE_RECIPIENT="${_rec}"
+fi
+if [[ -z "${BACKUP_AGE_RECIPIENT}" ]]; then
+  echo "backup: FATAL -- BACKUP_AGE_RECIPIENT not set. Refusing to write an UNENCRYPTED archive." >&2
+  echo "        Set an age public recipient (age1...) in .env or the environment. See docs/MIGRATION.md." >&2
+  exit 1
+fi
+command -v age >/dev/null 2>&1 || { echo "backup: FATAL -- 'age' not found; install it (apt install age / brew install age)." >&2; exit 1; }
+
 mkdir -p "${BACKUP_DIR}"
+chmod 700 "${BACKUP_DIR}" 2>/dev/null || true
 cd "${REPO_ROOT}"
 
 # Checkpoint WAL into the main DB file so the snapshot is self-contained.
@@ -115,20 +133,21 @@ fi
   echo "Marveen backup ${STAMP}"
   echo "host: $(hostname 2>/dev/null || echo '?')   user: ${USER:-?}   home: ${HOME}"
   echo "repo root: ${REPO_ROOT}"
-  echo "Restore: tar -xpzf <archive> -C <tmp>; copy repo/* -> project root, home/* -> \$HOME."
+  echo "Restore: age -d -i <private-key> <archive> | tar -xpzf - -C <tmp>; copy repo/* -> project root, home/* -> \$HOME."
   echo "See docs/MIGRATION.md for the full runbook (TCC, launchd paths, one-bot-one-poller, venv rebuild)."
   echo "--- repo/ ---"; sed 's,^,repo/,' "${REPOLIST}" 2>/dev/null || true
   echo "--- home/ ---"; sed 's,^,home/,' "${HOMELIST}" 2>/dev/null || true
 } > "${MANIFEST}"
 
-# --- Assemble the archive via a staging dir, then one plain tar. -----------
+# --- Assemble the archive via a staging dir, then tar | age. ---------------
 # The repo/ and home/ groups are produced by copying into a staging tree, NOT
 # by tar name-substitution: bsdtar's `-s` and GNU tar's `--transform` are
 # mutually incompatible (on GNU tar, `-s` is `--same-order` and takes no
 # argument), so a substitution-based build is not portable. Staging + a single
 # `tar -czf -C "${STAGE}" .` works identically on macOS (bsdtar) and Linux
-# (GNU tar). Everything backed up is small (a few MB), so the copy is cheap;
-# `cp -pR` preserves modes so the 0600 token files stay private.
+# (GNU tar); the tar stream is piped straight into `age` so no plaintext
+# archive ever touches disk. Everything backed up is small (a few MB), so the
+# copy is cheap; `cp -pR` preserves modes so the 0600 token files stay private.
 cp "${MANIFEST}" "${STAGE}/MANIFEST.txt"
 
 stage_group() {  # stage_group <listfile> <base> <group>
@@ -148,18 +167,19 @@ stage_group "${HOMELIST}" "${HOME}" home
 # Archive only the top-level entries that exist (a group dir is absent when
 # its list was empty), so tar never errors on a missing entry and the names
 # stay clean (no leading "./").
-( cd "${STAGE}" && tar -czf "${ARCHIVE}" MANIFEST.txt \
-    $( [[ -d repo ]] && echo repo ) $( [[ -d home ]] && echo home ) )
+( cd "${STAGE}" && tar -czf - MANIFEST.txt \
+    $( [[ -d repo ]] && echo repo ) $( [[ -d home ]] && echo home ) ) \
+  | age -r "${BACKUP_AGE_RECIPIENT}" -o "${ARCHIVE}"
+chmod 600 "${ARCHIVE}"
 echo "backup: wrote ${ARCHIVE} ($(wc -c < "${ARCHIVE}" | awk '{print $1}') bytes)"
 
-# The archive contains sensitive tokens (dashboard bearer, channel bot tokens,
-# project .env secrets). Do not auto-sync ${BACKUP_DIR} to iCloud, Dropbox,
-# Google Drive, or any other cloud-backup folder. Keep it local.
-echo "backup: WARNING -- archive contains sensitive tokens; keep ${BACKUP_DIR} out of cloud-sync folders (iCloud / Dropbox / Google Drive)." >&2
+# The archive is age-encrypted, but keep it local regardless: do not auto-sync
+# ${BACKUP_DIR} to iCloud, Dropbox, Google Drive, or any other cloud-backup folder.
+echo "backup: wrote ENCRYPTED ${ARCHIVE}. Decrypt needs the age PRIVATE key -- keep it safe & offline; without it this archive is unrecoverable." >&2
 
 # Keep the newest ${KEEP} archives, drop the rest. while-read (not mapfile)
 # for macOS bash 3.2 compatibility.
-ls -1t "${BACKUP_DIR}"/claudeclaw-*.tar.gz 2>/dev/null | tail -n +$((KEEP + 1)) | while IFS= read -r f; do
+ls -1t "${BACKUP_DIR}"/claudeclaw-*.tar.gz* 2>/dev/null | tail -n +$((KEEP + 1)) | while IFS= read -r f; do
   [[ -z "${f}" ]] && continue
   rm -f "${f}"
   echo "backup: pruned $(basename "${f}")"

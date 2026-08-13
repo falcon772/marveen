@@ -49,10 +49,11 @@ the Docker volumes (3) are **separate** and must be moved on their own.
 1. Record versions so the new host matches:
    - `node -v` (currently v22.x), `claude --version` (pinned; auto-update OFF),
      `docker --version`, `tailscale version`.
-2. Run a fresh backup and verify it:
+2. Run a fresh backup and verify it (requires `BACKUP_AGE_RECIPIENT` set in
+   `.env` and `age` installed — see §3 step 3 below for the encryption model):
    ```bash
    cd <repo> && bash scripts/backup.sh
-   tar -tzf backups/claudeclaw-*.tar.gz | sed -E 's,(^[^/]+/[^/]+/).*,\1...,' | sort -u
+   age -d -i ~/age-backup-key.txt backups/claudeclaw-*.tar.gz.age | tar -tzf - | sed -E 's,(^[^/]+/[^/]+/).*,\1...,' | sort -u
    ```
    Confirm both `repo/...` and `home/...` groups and the `MANIFEST.txt` are present.
 3. Export the Docker volumes (time-series + dashboards):
@@ -83,15 +84,28 @@ the Docker volumes (3) are **separate** and must be moved on their own.
 2. **Clone the repo** to the same absolute path if possible
    (`/Users/<user>/marveen`). A different path means every launchd plist and
    any absolute reference must be updated (see pitfalls).
-3. **Restore the tarball**, preserving modes (the token files are `0600`):
+3. **Decrypt and restore the tarball**, preserving modes (the token files are `0600`):
    ```bash
-   mkdir -p /tmp/restore && tar -xpzf claudeclaw-YYYYmmdd-HHMMSS.tar.gz -C /tmp/restore
+   mkdir -p /tmp/restore
+   age -d -i ~/age-backup-key.txt claudeclaw-YYYYmmdd-HHMMSS.tar.gz.age | tar -xpzf - -C /tmp/restore
    # inspect /tmp/restore/MANIFEST.txt, then:
    rsync -a /tmp/restore/repo/  <repo>/         # repo group -> project root
    rsync -a /tmp/restore/home/  "$HOME/"        # home group -> $HOME
    ```
    Verify perms: `ls -l <repo>/store/.dashboard-token ~/.claude/channels/*/.env`
    should show `-rw-------`.
+
+   **About the encryption (S4.3):** the backup script encrypts the archive to
+   an `age` public recipient set as `BACKUP_AGE_RECIPIENT` in `.env` (a public
+   value — safe to store there, safe inside the archive). The matching
+   *private* key is generated once by the operator with `age-keygen -o
+   age-backup-key.txt`, stored off the server (password manager / offline
+   medium — never in the repo, never in `$HOME` paths this script backs up),
+   and is the only way to decrypt. **Losing the private key makes every
+   archive ever produced permanently unrecoverable** — back it up separately
+   before relying on this. If `BACKUP_AGE_RECIPIENT` is unset or `age` is not
+   installed, `scripts/backup.sh` fails closed (non-zero exit, no archive
+   written) rather than ever writing an unencrypted backup.
 4. **Build the app** (do NOT copy `dist/` or `node_modules/` from the old box):
    ```bash
    cd <repo> && npm install && npm run build
