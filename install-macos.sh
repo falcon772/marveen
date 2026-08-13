@@ -110,6 +110,9 @@ if [ "$MISSING" -eq 1 ]; then
   command -v node &>/dev/null || brew install node@22
   command -v tmux &>/dev/null || brew install tmux
   command -v git &>/dev/null || brew install git
+  # age (S4.3, encrypted backups); scripts/backup.sh fails closed (refuses to
+  # write a plaintext archive) when it's missing.
+  command -v age &>/dev/null || brew install age
   echo -e "${GREEN}✓ Függőségek telepítve${NC}"
 fi
 

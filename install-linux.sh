@@ -148,7 +148,10 @@ if command -v free &>/dev/null; then
 fi
 
 MISSING_PKGS=""
-for pkg in ffmpeg git tmux lsof curl python3 pipx unzip; do
+# age (S4.3, encrypted backups): not in every distro's default repos on older
+# releases -- if apt/dnf can't find it, install manually; scripts/backup.sh
+# fails closed (refuses to write a plaintext archive) when it's missing.
+for pkg in ffmpeg git tmux lsof curl python3 pipx unzip age; do
   if ! command -v "$pkg" &>/dev/null; then
     MISSING_PKGS="$MISSING_PKGS $pkg"
   fi
@@ -178,7 +181,7 @@ if [ -n "$MISSING_PKGS" ]; then
     # dnf/yum (Fedora/Nobara/RHEL). A disztro nodejs csomagja v20+ az aktualis
     # kiadasokon, es az npm-et is tartalmazza -- nincs szukseg kulso repora.
     # Csomagnevek megegyeznek a Debian-belivel (ffmpeg/git/tmux/lsof/curl/
-    # python3/pipx/unzip/nodejs). Az ffmpeg-hez Fedoran az RPM Fusion repo
+    # python3/pipx/unzip/age/nodejs). Az ffmpeg-hez Fedoran az RPM Fusion repo
     # kellhet; ha mar engedelyezve van, a csomag elerheto.
     # shellcheck disable=SC2086
     sudo "$PKG_MANAGER" install -y $MISSING_PKGS
