@@ -18,7 +18,7 @@ import { getExternalProjectPaths, addExternalProjectPath, removeExternalProjectP
 import { listSecrets, setSecret, getSecret, deleteSecret } from '../vault.js'
 import {
   getBindings, addBinding, removeBinding, removeBindingsForSecret,
-  syncSecret, syncAllBindings, scanMcpConfigs, unsyncBinding,
+  syncSecret, syncAllBindings, scanMcpConfigs, unsyncBinding, resolveBindingCandidates,
 } from '../vault-bindings.js'
 import type { RouteContext } from './types.js'
 
@@ -97,7 +97,7 @@ function upsertLocalCatalogEntry(entry: any): void {
 }
 
 export async function tryHandleConnectors(ctx: RouteContext): Promise<boolean> {
-  const { req, res, path, method } = ctx
+  const { req, res, path, method, url } = ctx
 
   // GET /api/connectors -- list every MCP server visible to Claude Code,
   // pulled from the local config files plus the cached `claude mcp list`
@@ -699,12 +699,26 @@ export async function tryHandleConnectors(ctx: RouteContext): Promise<boolean> {
     return true
   }
 
+  // Read-only discovery step: given a server name, list every .mcp.json that
+  // has a server of that name, without writing anything. The manual bind UI
+  // calls this first so an operator can confirm a subset before any write
+  // happens (S4.5) -- writing an unreviewed superset would silently grant a
+  // secret to every same-named agent server.
+  if (path === '/api/vault/bindings/resolve' && method === 'GET') {
+    const serverName = url.searchParams.get('serverName')?.trim()
+    if (!serverName) {
+      json(res, { error: 'serverName required' }, 400)
+      return true
+    }
+    json(res, { candidates: resolveBindingCandidates(serverName) })
+    return true
+  }
+
   if (path === '/api/vault/bindings' && method === 'POST') {
     const body = await readBody(req)
     const data = JSON.parse(body.toString()) as {
       vaultSecretId: string
       envVar: string
-      serverName?: string
       targets?: Array<{ mcpFilePath: string, serverName: string }>
     }
     if (!data.vaultSecretId || !data.envVar) {
@@ -712,39 +726,11 @@ export async function tryHandleConnectors(ctx: RouteContext): Promise<boolean> {
       return true
     }
 
-    let targets = data.targets || []
-    if (data.serverName && targets.length === 0) {
-      const searchPaths: Array<[string, string]> = [
-        [join(PROJECT_ROOT, '.mcp.json'), 'project'],
-        [join(homedir(), '.claude.json'), 'user'],
-      ]
-      for (const agentName of listAgentNames()) {
-        searchPaths.push([join(AGENTS_BASE_DIR, agentName, '.mcp.json'), `agent:${agentName}`])
-        const projectsDir = join(AGENTS_BASE_DIR, agentName, 'projects')
-        if (existsSync(projectsDir)) {
-          try {
-            for (const proj of readdirSync(projectsDir)) {
-              if (!statSync(join(projectsDir, proj)).isDirectory()) continue
-              searchPaths.push([join(projectsDir, proj, '.mcp.json'), `project:${agentName}/${proj}`])
-            }
-          } catch { /* ignore */ }
-        }
-      }
-      for (const extPath of getExternalProjectPaths()) {
-        searchPaths.push([join(extPath, '.mcp.json'), `project:external/${basename(extPath)}`])
-      }
-      for (const [src] of searchPaths) {
-        try {
-          const parsed = JSON.parse(readFileOr(src, '{}'))
-          if (parsed.mcpServers?.[data.serverName]) {
-            targets.push({ mcpFilePath: src, serverName: data.serverName })
-          }
-        } catch { /* skip */ }
-      }
-    }
-
+    // Fail-closed: writes only to explicitly confirmed targets. No
+    // serverName-only auto-fan-out here anymore -- see resolve above.
+    const targets = data.targets || []
     if (targets.length === 0) {
-      json(res, { error: 'No targets found for this server' }, 400)
+      json(res, { ok: false, error: 'targets required' }, 400)
       return true
     }
     addBinding({ vaultSecretId: data.vaultSecretId, envVar: data.envVar, targets })

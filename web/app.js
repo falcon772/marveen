@@ -6186,15 +6186,35 @@ function renderVaultGrid(secrets) {
   const serverSelect = document.getElementById('vaultBindServer')
   const envVarInput = document.getElementById('vaultBindEnvVar')
   const statusEl = document.getElementById('vaultBindStatus')
+  const candidatesEl = document.getElementById('vaultBindCandidates')
+  const candidatesNoteEl = document.getElementById('vaultBindCandidatesNote')
   if (!bindBtn || !overlay) return
 
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(overlay) })
-  closeBtn.addEventListener('click', () => { closeModal(overlay) })
+  // Two-step, fail-closed flow (S4.5): step 1 resolves candidate .mcp.json
+  // targets for the chosen server (read-only, writes nothing) and shows them
+  // as an unchecked checklist; step 2 writes only the boxes the operator
+  // ticked. Replaces the old serverName-only auto-fan-out, which silently
+  // wrote the vault reference into every same-named server across all agents.
+  let phase = 'form'
+
+  function resetToForm() {
+    phase = 'form'
+    candidatesEl.innerHTML = ''
+    candidatesNoteEl.hidden = true
+    secretSelect.disabled = false
+    serverSelect.disabled = false
+    envVarInput.disabled = false
+    saveBtn.textContent = 'Hozzarendeles'
+  }
+
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) { closeModal(overlay); resetToForm() } })
+  closeBtn.addEventListener('click', () => { closeModal(overlay); resetToForm() })
 
   bindBtn.addEventListener('click', async () => {
     try {
       statusEl.hidden = true
       envVarInput.value = ''
+      resetToForm()
 
       const [secretsRes, connectorsRes] = await Promise.all([
         fetch('/api/vault'),
@@ -6239,12 +6259,80 @@ function renderVaultGrid(secrets) {
     }
   })
 
+  function renderCandidates(candidates) {
+    candidatesEl.innerHTML = ''
+    for (const c of candidates) {
+      const row = document.createElement('div')
+      row.className = 'vault-scan-row'
+      row.innerHTML = `
+        <label class="vault-scan-check">
+          <input type="checkbox" data-mcp-path="${escapeHtml(c.mcpFilePath)}" data-server-name="${escapeHtml(c.serverName)}">
+        </label>
+        <div class="vault-scan-info">
+          <div class="vault-scan-server">${escapeHtml(c.agentLabel)}</div>
+          <div class="vault-scan-env">${escapeHtml(c.mcpFilePath)}</div>
+        </div>
+      `
+      candidatesEl.appendChild(row)
+    }
+    if (candidates.length > 1) {
+      candidatesNoteEl.textContent = `${candidates.length} agent/projekt mar rendelkezik "${serverSelect.value}" nevu szerverrel. Csak azokat pipald ki, akik megkapjak ezt a kulcsot.`
+      candidatesNoteEl.hidden = false
+    } else {
+      candidatesNoteEl.hidden = true
+    }
+  }
+
   saveBtn.addEventListener('click', async () => {
+    if (phase === 'form') {
+      const vaultSecretId = secretSelect.value
+      const serverName = serverSelect.value
+      const envVar = envVarInput.value.trim()
+      if (!vaultSecretId || !serverName || !envVar) {
+        statusEl.textContent = 'Minden mezo kitoltese kotelezo'
+        statusEl.className = 'vault-bind-status error'
+        statusEl.hidden = false
+        return
+      }
+
+      saveBtn.disabled = true
+      saveBtn.textContent = 'Kereses...'
+      try {
+        const res = await fetch(`/api/vault/bindings/resolve?serverName=${encodeURIComponent(serverName)}`)
+        const data = await res.json()
+        const candidates = data.candidates || []
+        if (candidates.length === 0) {
+          statusEl.textContent = 'Nincs cel a megadott szerverhez'
+          statusEl.className = 'vault-bind-status error'
+          statusEl.hidden = false
+          return
+        }
+        statusEl.hidden = true
+        renderCandidates(candidates)
+        secretSelect.disabled = true
+        serverSelect.disabled = true
+        envVarInput.disabled = true
+        phase = 'confirm'
+        saveBtn.textContent = 'Megerosites'
+      } catch (err) {
+        statusEl.textContent = 'Halozati hiba'
+        statusEl.className = 'vault-bind-status error'
+        statusEl.hidden = false
+      } finally {
+        saveBtn.disabled = false
+      }
+      return
+    }
+
+    // phase === 'confirm': write only the ticked targets.
     const vaultSecretId = secretSelect.value
-    const serverName = serverSelect.value
     const envVar = envVarInput.value.trim()
-    if (!vaultSecretId || !serverName || !envVar) {
-      statusEl.textContent = 'Minden mezo kitoltese kotelezo'
+    const targets = Array.from(candidatesEl.querySelectorAll('input[type="checkbox"]:checked')).map(cb => ({
+      mcpFilePath: cb.getAttribute('data-mcp-path'),
+      serverName: cb.getAttribute('data-server-name'),
+    }))
+    if (targets.length === 0) {
+      statusEl.textContent = 'Valassz legalabb egy celt'
       statusEl.className = 'vault-bind-status error'
       statusEl.hidden = false
       return
@@ -6256,7 +6344,7 @@ function renderVaultGrid(secrets) {
       const res = await fetch('/api/vault/bindings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vaultSecretId, envVar, serverName }),
+        body: JSON.stringify({ vaultSecretId, envVar, targets }),
       })
       const data = await res.json()
       if (data.ok) {
@@ -6265,7 +6353,7 @@ function renderVaultGrid(secrets) {
         statusEl.hidden = false
         loadVaultPage()
         loadVault()
-        setTimeout(() => { closeModal(overlay) }, 1500)
+        setTimeout(() => { closeModal(overlay); resetToForm() }, 1500)
       } else {
         statusEl.textContent = data.error || 'Hiba tortent'
         statusEl.className = 'vault-bind-status error'
@@ -6277,7 +6365,7 @@ function renderVaultGrid(secrets) {
       statusEl.hidden = false
     } finally {
       saveBtn.disabled = false
-      saveBtn.textContent = 'Hozzarendeles'
+      if (phase === 'confirm') saveBtn.textContent = 'Megerosites'
     }
   })
 })()
