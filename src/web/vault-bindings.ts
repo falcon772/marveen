@@ -139,6 +139,28 @@ export function collectAllMcpFilePaths(): Array<{ path: string, label: string }>
   return paths
 }
 
+export interface BindingCandidate {
+  mcpFilePath: string
+  serverName: string
+  agentLabel: string
+}
+
+// Read-only counterpart to the discovery walk POST /api/vault/bindings used
+// to do inline before writing -- returns who *could* receive the binding
+// without touching any file, so the UI can show a confirm step first.
+export function resolveBindingCandidates(serverName: string): BindingCandidate[] {
+  const candidates: BindingCandidate[] = []
+  for (const { path: mcpPath, label } of collectAllMcpFilePaths()) {
+    try {
+      const parsed = JSON.parse(readFileOr(mcpPath, '{}'))
+      if (parsed.mcpServers?.[serverName]) {
+        candidates.push({ mcpFilePath: mcpPath, serverName, agentLabel: label })
+      }
+    } catch { /* skip unreadable files */ }
+  }
+  return candidates
+}
+
 function maskValue(val: string): string {
   if (val.length <= 6) return '***'
   return val.slice(0, 3) + '...' + val.slice(-3)
