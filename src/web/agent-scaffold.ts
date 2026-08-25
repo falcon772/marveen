@@ -210,6 +210,7 @@ Feladat létrehozása nem a te hatáskörödben van — jelezd ${MAIN_AGENT_ID}-
 
 Típusok: task (mindig szól az eredménnyel) vagy heartbeat (csak fontosnál szól).
 Cron formátum: perc óra nap hónap hétnapja (pl. 0 8 * * * = minden nap 8:00).
+NE írd közvetlenül az SQLite scheduled_tasks táblát - az egy régi API.
 
 ## Öntanulás és Skill rendszer
 
