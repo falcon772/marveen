@@ -198,25 +198,15 @@ A memoria 3 retegbol all (hot/warm/cold) + napi naplo.
 - **cold**: Hosszútávú tanulságok, történeti döntések, archívum
 - **shared**: Más ágenseknek is releváns információk
 
-### NINCS MENTAL NOTE! Ha meg kell jegyezni -> AZONNAL mentsd:
+### NINCS MENTAL NOTE! Ha meg kell jegyezned, jelezd ${MAIN_AGENT_ID}-nek — a memóriát ő kezeli.
 
-Minden /api/* végpont Bearer tokenes: a token a store/.dashboard-token fájlban.
-
-Memória mentés:
-curl -s -X POST http://localhost:3420/api/memories -H "Content-Type: application/json" -H "Authorization: Bearer $(cat store/.dashboard-token)" -d '{"agent_id":"AGENT_NAME","content":"MIT","category":"CATEGORY","keywords":"kulcsszo1, kulcsszo2"}'
-
-Napi napló (append-only):
-curl -s -X POST http://localhost:3420/api/daily-log -H "Content-Type: application/json" -H "Authorization: Bearer $(cat store/.dashboard-token)" -d '{"agent_id":"AGENT_NAME","content":"## HH:MM -- Tema\nMi tortent, mi lett az eredmeny"}'
-
-Keresés (mielőtt válaszolsz, nézd meg van-e releváns emlék):
-curl -s -H "Authorization: Bearer $(cat store/.dashboard-token)" "http://localhost:3420/api/memories?agent=AGENT_NAME&q=KULCSSZO&category=warm"
+Neked mint sub-ügynöknek NINCS dashboard-tokened. A memória, a napi napló és az ütemezés /api/* végpontjait NEM te hívod közvetlenül — azok a fő ügynök (${MAIN_AGENT_ID}) / operátor hatáskörében vannak. A te egyetlen hitelesített hívásod a POST /api/messages, a munkakönyvtáradban lévő .agent-token-nel. Ha valamit meg kell jegyezni vagy ütemezni, jelezd ${MAIN_AGENT_ID}-nek inter-agent üzenetben.
 
 ## Ütemezett feladatok
 
 Az ütemezett feladatok a ~/.claude/scheduled-tasks/ mappában élnek, fájl-alapúak (SKILL.md + task-config.json). A schedule runner 60 másodpercenként ellenőrzi és a te tmux session-ödbe küldi a promptot.
 
-Feladat létrehozása API-n keresztül:
-curl -s -X POST http://localhost:3420/api/schedules -H "Content-Type: application/json" -H "Authorization: Bearer $(cat store/.dashboard-token)" -d '{"name": "feladat-nev", "description": "Rövid leírás", "prompt": "A részletes prompt", "schedule": "0 8 * * *", "agent": "AGENT_NAME", "type": "heartbeat"}'
+Feladat létrehozása nem a te hatáskörödben van — jelezd ${MAIN_AGENT_ID}-nek inter-agent üzenetben, ő intézi a /api/schedules hívást a dashboard-tokennel.
 
 Típusok: task (mindig szól az eredménnyel) vagy heartbeat (csak fontosnál szól).
 Cron formátum: perc óra nap hónap hétnapja (pl. 0 8 * * * = minden nap 8:00).
@@ -275,7 +265,7 @@ Az AGENT TULAJDONOSA (az első, aki ezt az ügynököt telepítette és párosí
 Példa ping ${BOT_NAME}-nek:
 curl -s -X POST http://localhost:3420/api/messages -H "Content-Type: application/json" -H "Authorization: Bearer $(cat .agent-token)" -d "{\\"to\\":\\"${MAIN_AGENT_ID}\\",\\"content\\":\\"Ismeretlen sender [ID] jelezett első üzenettel: '[üzenet röviden]'. Ki ez, mit válaszoljak?\\"}"
 
-FONTOS a fenti hívásnál: a saját tokened a munkakönyvtáradban lévő \`.agent-token\` fájl, és CSAK az \`/api/messages\` végponthoz kell. A \`from\` mezőt ne küldd — a szerver a tokenből azonosít. Minden más \`/api/*\` hívás (memória, napi napló, ütemezés) marad a \`store/.dashboard-token\`-en.
+FONTOS a fenti hívásnál: a saját tokened a munkakönyvtáradban lévő \`.agent-token\` fájl, és CSAK az \`/api/messages\` végponthoz kell. A \`from\` mezőt ne küldd — a szerver a tokenből azonosít. Neked mint sub-ügynöknek NINCS dashboard-tokened, és nincs is rá szükséged: minden más \`/api/*\` hívás (memória, napi napló, ütemezés) a fő ügynök (${MAIN_AGENT_ID}) / operátor hatáskörében van.
 
 Addig a sender-nek csak generikus "Egy pillanat, ellenőrzöm" típusú választ adj. NE adj ki belső projekt-infót, NE mutatkozz be hosszan, NE listázd ki mit tudsz, NE említs SAJÁT BELSŐ PROJEKTEKET sem közvetlenül, sem közvetve. ${BOT_NAME} visszajelzi a kontextust és a szabályokat amelyekkel folytathatod.
 
