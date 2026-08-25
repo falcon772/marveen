@@ -7,6 +7,12 @@
 #   repo/   -> extract under the project root (this repo)
 #     store/claudeclaw.db (+ -shm/-wal; WAL-checkpointed before copy)
 #     store/.dashboard-token   (dashboard bearer)
+#     store/vault.json         (encrypted MCP-secret vault; AES-256-GCM)
+#     store/.vault-key         (Linux file key for the vault; 0600)
+#       NOTE: on macOS the vault key lives in the Keychain (the file is
+#       renamed .vault-key.migrated), so a file backup only captures the key
+#       on Linux; a macOS restore needs the Keychain entry re-provisioned.
+#       Prod is Linux, so this is an edge note.
 #     .env                     (project root secrets)
 #     scheduled-tasks.json     (legacy, if present)
 #     assets/meetings/**       (meeting transcripts/memos)
@@ -83,6 +89,8 @@ add_if "${REPOLIST}" "${REPO_ROOT}" store/claudeclaw.db
 add_if "${REPOLIST}" "${REPO_ROOT}" store/claudeclaw.db-shm
 add_if "${REPOLIST}" "${REPO_ROOT}" store/claudeclaw.db-wal
 add_if "${REPOLIST}" "${REPO_ROOT}" store/.dashboard-token
+add_if "${REPOLIST}" "${REPO_ROOT}" store/vault.json
+add_if "${REPOLIST}" "${REPO_ROOT}" store/.vault-key
 add_if "${REPOLIST}" "${REPO_ROOT}" .env
 add_if "${REPOLIST}" "${REPO_ROOT}" scheduled-tasks.json
 add_if "${REPOLIST}" "${REPO_ROOT}" assets/meetings
