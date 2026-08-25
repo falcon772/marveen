@@ -93,10 +93,22 @@ export function readAgentModel(name: string): string {
 }
 
 export function writeAgentModel(name: string, model: string): void {
+  // Re-validate here, not just at the route layer, so any future/internal
+  // caller that reaches this function without going through the route's
+  // isAllowedModel check still can't persist an unvalidated model string
+  // into agent-config.json (audit #2: that field is later interpolated into
+  // a launcher shell command). Fail closed: throw and write nothing.
+  if (!isAllowedModel(model)) {
+    throw new Error(`Unsupported model: ${model}`)
+  }
   const configPath = join(agentDir(name), 'agent-config.json')
   let config: Record<string, unknown> = {}
   try { config = JSON.parse(readFileOr(configPath, '{}')) } catch {}
-  config.model = model
+  // Store the resolved canonical id, not the raw alias, so the persisted
+  // value is always an exact allowlisted id. resolveModelId is idempotent,
+  // so callers that already pass a resolved id (e.g. the PUT route) are
+  // unaffected.
+  config.model = resolveModelId(model)
   atomicWriteFileSync(configPath, JSON.stringify(config, null, 2))
 }
 
